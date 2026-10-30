@@ -17,4 +17,4 @@ where = ["src"]
 include = ["qq*"]
 
 [tool.setuptools.package-data]
-qq = ["examples/*.json"]
+qq = ["examples/*.json", "PROMPT.md"]
