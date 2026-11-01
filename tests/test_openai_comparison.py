@@ -4,14 +4,14 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from scripts.compare_openai import OpenAIComparison
+from qq.providers import OpenAIClient
 from qq.core import QQError
 
 
-class OpenAIComparisonTests(unittest.TestCase):
+class OpenAIClientTests(unittest.TestCase):
     def call(self, envelope):
-        client = OpenAIComparison("test-key")
-        with patch("scripts.compare_openai.urlopen",
+        client = OpenAIClient("test-key")
+        with patch("qq.providers.urlopen",
                    return_value=io.StringIO(json.dumps(envelope))) as request:
             result = client("test-model", "ignored", {"type": "object"}, "Review code", {})
         return result, client, request
@@ -33,20 +33,24 @@ class OpenAIComparisonTests(unittest.TestCase):
 
     def test_incomplete_refused_and_invalid_outputs_are_errors(self):
         envelopes = [
+            None,
             {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}},
+            {"status": "completed", "output": {}},
+            {"status": "completed", "output": [{"type": "message", "content": None}]},
             {"status": "completed", "output": [{"type": "message", "content": [{"type": "refusal"}]}]},
             {"status": "completed", "output": []},
             {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "invalid"}]}]},
+            {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "[]"}]}]},
         ]
         for envelope in envelopes:
             with self.subTest(envelope=envelope), self.assertRaises(QQError):
                 self.call(envelope)
 
     def test_http_error_does_not_expose_key_from_response(self):
-        client = OpenAIComparison("test-key")
+        client = OpenAIClient("test-key")
         error = HTTPError("https://api.openai.com/v1/responses", 401, "test-key", {},
                           io.BytesIO(b'{"error": {"message": "invalid key: test-key"}}'))
-        with patch("scripts.compare_openai.urlopen", side_effect=error):
+        with patch("qq.providers.urlopen", side_effect=error):
             with self.assertRaises(QQError) as raised:
                 client("test-model", "ignored", {}, "Review code", {})
         self.assertNotIn("test-key", str(raised.exception))

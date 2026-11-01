@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .core import QQError, analyse, collect, save_json, validate
+from .providers import OPENAI_MODEL, OLLAMA_MODEL, OpenAIClient
 
 
 def main():
@@ -17,8 +18,10 @@ def main():
     parser.add_argument("--example", action="store_true", help="Open the curated two-point example without a model")
     parser.add_argument("pr", nargs="?", help="GitHub PR URL")
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="Local checkout, read without changes")
-    parser.add_argument("--model", default=os.getenv("QQ_MODEL", "qwen3.5:9b-coding"))
-    parser.add_argument("--endpoint", default="http://127.0.0.1:11434")
+    parser.add_argument("--provider", choices=("openai", "ollama"), default="openai",
+                        help="Inference provider, default: openai. OpenAI receives the selected PR evidence.")
+    parser.add_argument("--model", help=f"Model name, default: {OPENAI_MODEL} for OpenAI, {OLLAMA_MODEL} for Ollama")
+    parser.add_argument("--endpoint", help="Local Ollama endpoint, requires --provider ollama")
     parser.add_argument("--context-file", action="append", default=[], help="Additional repository-relative file")
     parser.add_argument("--state-dir", type=Path, default=Path(".qq"))
     parser.add_argument("--open", type=Path, help="Open a saved review without GitHub or a model")
@@ -34,12 +37,27 @@ def main():
         args.open = Path(__file__).with_name("examples") / "suggestions.json"
     if args.collect_only and args.open:
         parser.error("--collect-only cannot be used with --open or --example.")
+    if args.endpoint and args.provider != "ollama":
+        parser.error("--endpoint requires --provider ollama. OpenAI uses https://api.openai.com.")
+    if args.provider == "openai":
+        args.model = args.model or os.getenv("QQ_OPENAI_MODEL", OPENAI_MODEL)
+        args.endpoint = "https://api.openai.com/v1"
+    else:
+        args.model = args.model or os.getenv("QQ_MODEL", OLLAMA_MODEL)
+        args.endpoint = args.endpoint or "http://127.0.0.1:11434"
 
     def load(progress):
         if args.open:
             review = json.loads(args.open.read_text())
             validate(review["report"], review["packet"])
             return review
+        client = None
+        if not args.collect_only:
+            if args.provider == "openai":
+                client = OpenAIClient()
+                progress(f"Using OpenAI API with {args.model}. Selected PR evidence will be sent to OpenAI.")
+            else:
+                progress(f"Using local Ollama with {args.model}")
         packet = json.loads(args.packet.read_text()) if args.packet else collect(
             args.pr, args.repo, args.context_file, progress)
         save_json(args.state_dir / (packet["id"] + ".packet.json"), packet)
@@ -48,18 +66,22 @@ def main():
         started = time.monotonic()
         audit = {}
         try:
-            report = analyse(packet, args.model, args.endpoint, progress, audit=audit)
+            report = analyse(packet, args.model, args.endpoint, progress, audit=audit, model_call=client)
         except QQError as exc:
-            failure = {"packet_id": packet["id"], "model": args.model, "assessment": audit,
+            failure = {"packet_id": packet["id"], "model": args.model, "provider": args.provider, "assessment": audit,
                        "error": str(exc), "created_at": datetime.now(timezone.utc).isoformat()}
+            if client is not None:
+                failure["api_calls"] = client.calls
             failure_id = hashlib.sha256(json.dumps(failure, sort_keys=True).encode()).hexdigest()[:16]
             destination = args.state_dir / (failure_id + ".failure.json")
             save_json(destination, failure)
             raise QQError(f"{exc} Diagnostic saved to {destination}") from exc
-        review = {"packet": packet, "report": report, "model": args.model, "assessment": audit,
+        review = {"packet": packet, "report": report, "model": args.model, "provider": args.provider, "assessment": audit,
                   "created_at": datetime.now(timezone.utc).isoformat(),
                   "elapsed_seconds": round(time.monotonic() - started, 1)}
-        review["id"] = hashlib.sha256(json.dumps([packet["id"], args.model, report], sort_keys=True).encode()).hexdigest()[:16]
+        if client is not None:
+            review["api_calls"] = client.calls
+        review["id"] = hashlib.sha256(json.dumps([packet["id"], args.provider, args.model, report], sort_keys=True).encode()).hexdigest()[:16]
         destination = args.state_dir / (review["id"] + ".review.json")
         save_json(destination, review)
         progress(f"Saved {destination}")

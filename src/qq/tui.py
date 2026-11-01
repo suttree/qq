@@ -13,9 +13,12 @@ def paragraphs(review: dict, selected: int, tab: int) -> list[str]:
     if tab == 2:
         return ["PR diff", "", *packet["diff"].splitlines()]
     if tab == 3:
+        model = review.get("model")
+        provider = {"openai": "OpenAI API", "ollama": "local Ollama"}.get(review.get("provider"))
+        inference = [f"Model: {model}" + (f" via {provider}" if provider else ""), ""] if model else []
         checks = review.get("assessment", {}).get("decisions", {}).get("decisions", [])
         decisions = [f"Draft point {d['index'] + 1}: {'kept' if d['keep'] else 'discarded'}. {d['reason']}" for d in checks]
-        return ["Scope of this assessment", "", *([review["example_note"], ""] if review.get("example") else []), f"Head: {packet['pr']['headRefOid']}",
+        return ["Scope of this assessment", "", *inference, *([review["example_note"], ""] if review.get("example") else []), f"Head: {packet['pr']['headRefOid']}",
                 f"Comparison base: {packet['merge_base']}", "", *packet["coverage_notes"],
                 "", "Draft relevance check", *(decisions or ["No second-pass decisions in this saved result."]),
                 "", "Files supplied to the model", *[f"{f['side']}: {f['path']}" for f in packet["files"]]]
@@ -172,8 +175,8 @@ def show(loader):
             else:
                 elapsed = int(time.monotonic() - started)
                 lines = wrapped(["Reading and thinking" + "." * (elapsed % 4), "", status,
-                                 "", f"{elapsed}s elapsed. Local models can take several minutes.",
-                                 "q closes the viewer; the current model request may finish in Ollama."], width - 6)
+                                 "", f"{elapsed}s elapsed. Reviews can take several minutes.",
+                                 "q closes the viewer; the current model request may still finish."], width - 6)
             visible = max(1, height - 10)
             scroll = max(0, min(scroll, max(0, len(lines) - visible)))
             titles = {point["title"] for point in review["report"]["points"]} if review else set()

@@ -2,11 +2,11 @@
 
 Code Coach helps you prepare a conversation about a pull request. Run its CLI with `qq`. It returns zero, one or two coaching points, each with code evidence, a reason to discuss it, a question to ask, and a principle to explain.
 
-This is an early local prototype. The TUI and evidence checks work, but the first local-model trial produced reasoning errors, including in the final relevance check. Its coaching judgement is not yet validated. See the evaluation notes before relying on its output.
+This is an early prototype. Reviews use the OpenAI API by default. Coaching judgement is still being evaluated. See [the evaluation notes](EVALUATION.md) before relying on its output.
 
 ## Get started
 
-The example needs only Python 3.11 or newer with curses. Live PR analysis also needs Git, an authenticated GitHub CLI, and a running local Ollama model. There are no Python package dependencies. macOS and Linux are supported.
+The example needs only Python 3.11 or newer with curses. Live PR analysis also needs Git, an authenticated GitHub CLI, and an OpenAI API key in `OPENAI_API_KEY`. API reviews send selected PR evidence to OpenAI and incur usage charges. There are no Python package dependencies. macOS and Linux are supported.
 
 Clone the repository, then run the bundled example. Skip the clone if you already have the checkout.
 
@@ -56,28 +56,28 @@ The launcher works from any directory without installing the Python package. It 
 
 ## Model and interface
 
-The default model is `qwen3.5:9b-coding`, which was already installed on the development machine. Select another installed model with `--model NAME` or `QQ_MODEL`. QQ never downloads models. The selected model must support Ollama's JSON schema output and `think: false`.
-
-Ollama must be running before live analysis. If qq reports that it cannot connect, start Ollama with your usual startup command, or run `ollama serve` in another terminal, then retry qq. The default endpoint is `http://127.0.0.1:11434`. Use `--endpoint URL` if your local Ollama server listens at a different address.
-
-Local requests include the JSON schema in the prompt as well as the API format field, as [Ollama recommends](https://docs.ollama.com/capabilities/structured-outputs). Sampling defaults follow [Qwen's non-thinking settings](https://huggingface.co/Qwen/Qwen3.5-9B), with a fixed sampling seed. Outputs can still vary between runs, and these settings do not guarantee correct reviews.
-
-The UI opens immediately and shows progress while GitHub and Ollama respond. A local model can take several minutes. Press `q` to close. Closing the UI does not cancel a request already running in Ollama.
-
-The UI uses pink for titles and the selected tab, orange for the rationale and assumptions headings, and yellow for principles and cited lines. Diff additions are green and removals are pink. It falls back to basic colours or monochrome when needed.
-
-## Compare a saved packet with OpenAI
-
-With `OPENAI_API_KEY` set in your environment, run this from the qq checkout:
+The normal `qq PR_URL` command uses the OpenAI Responses API with `gpt-6.1-sol` and strict structured output. Set your API key in the shell before running a live review:
 
 ```sh
-python3 scripts/compare_openai.py \
-  --packet .qq/PACKET_ID.packet.json \
-  --output .qq/openai-comparison.json
-./qq --open .qq/openai-comparison.json
+export OPENAI_API_KEY="your-api-key"
+qq https://github.com/suttree/commonground/pull/15 --repo ~/src/commonground
 ```
 
-This sends the saved PR evidence to OpenAI and uses the same prompt, citation validation, and relevance check as live analysis. The default comparison model is `gpt-6.1-sol`; select another with `--model`. API calls incur usage charges. The output records token usage, elapsed time, and any correction attempts. Each run requires a new output path. Keep results in the ignored `.qq/` directory because they contain source excerpts. The ordinary `qq PR_URL` command still uses Ollama.
+Select another API model with `--model NAME` or `QQ_OPENAI_MODEL`. The Context view identifies the provider and model. Saved reviews and failure diagnostics include API call metadata and token usage. QQ reads the key from the environment and does not save it with the review. Missing credentials, API errors, and incomplete responses stop the analysis. QQ does not automatically switch providers.
+
+To run entirely local inference, select Ollama explicitly:
+
+```sh
+qq https://github.com/suttree/commonground/pull/15 --repo ~/src/commonground --provider ollama
+```
+
+The local default is `qwen3.5:9b-coding`. Override it with `--model NAME` or `QQ_MODEL`. The legacy `QQ_MODEL` variable applies only to Ollama, so an existing local setting does not change the OpenAI default. Ollama must be running, and QQ never downloads models. Start it with your usual startup command or run `ollama serve` in another terminal. The default local endpoint is `http://127.0.0.1:11434`; `--endpoint URL` requires `--provider ollama`.
+
+Local requests include the JSON schema in the prompt as well as the API format field, as [Ollama recommends](https://docs.ollama.com/capabilities/structured-outputs). Local sampling defaults follow [Qwen's non-thinking settings](https://huggingface.co/Qwen/Qwen3.5-9B), with a fixed sampling seed. Outputs can still vary between runs, and these settings do not guarantee correct reviews.
+
+The UI opens immediately and shows progress while GitHub and the selected provider respond. Press `q` to close. A submitted model request may continue after the viewer closes.
+
+The UI uses pink for titles and the selected tab, orange for the rationale and assumptions headings, and yellow for principles and cited lines. Diff additions are green and removals are pink. It falls back to basic colours or monochrome when needed.
 
 ## Edit the coaching prompt
 
@@ -108,7 +108,7 @@ Every accepted finding quotes an exact supplied file excerpt at its actual line.
 
 Retained points must pass exact citation validation. If the model gets indentation or a line number wrong, QQ resolves the quote only when it has one unique match in the supplied file. If a retained citation still fails, QQ asks once for source line ranges and copies the exact text itself. It then checks the claims again against those selected lines before accepting any feedback. The model cannot add new points during these checks.
 
-Unresolved citations in retained points, malformed output, and model failures are errors. They are never silently converted into "no feedback". Failed analyses save a `.failure.json` diagnostic beside the evidence packet, including drafts and any corrections received. The Context view shows the final relevance decisions. The same local model performs these checks and can still make mistakes.
+Unresolved citations in retained points, malformed output, and model failures are errors. They are never silently converted into "no feedback". Failed analyses save a `.failure.json` diagnostic beside the evidence packet, including drafts and any corrections received. The Context view shows the final relevance decisions. The selected model performs these checks and can still make mistakes.
 
 The model can return three outcomes:
 
@@ -118,7 +118,7 @@ The model can return three outcomes:
 
 No-feedback results are scoped to the supplied material, not a correctness guarantee for the PR.
 
-The normal qq command sends inference requests to a localhost Ollama endpoint. The separate OpenAI comparison script sends the saved evidence to OpenAI only when you run it explicitly. GitHub receives the metadata request through `gh`. Obvious credential paths and binary files are excluded, but this is not a general secret scanner. The checkout launcher saves evidence and model output in the project's `.qq/` directory, which is ignored by Git. Treat that directory as source code from the reviewed repository.
+The default OpenAI provider receives the selected source excerpts, PR metadata, diff, and review prompts. Selecting `--provider ollama` sends inference requests only to the configured localhost endpoint. GitHub receives the metadata request through `gh`. Obvious credential paths and binary files are excluded, but this is not a general secret scanner. The checkout launcher saves evidence and model output in the project's `.qq/` directory, which is ignored by Git. Treat that directory as source code from the reviewed repository.
 
 ## Repeat an assessment
 
@@ -135,6 +135,8 @@ Analyse the same evidence again, or reopen a saved result:
 qq --packet packet.json --json > review.json
 qq --open review.json
 ```
+
+These replay commands use OpenAI by default. Add `--provider ollama` to `--packet` for a local comparison. The older `scripts/compare_openai.py` helper uses the same API client and remains available for saved-packet comparisons.
 
 `--json` runs without the TUI. `--state-dir PATH` selects where evidence and results are saved. Reopening a result requires neither GitHub access nor a running model.
 

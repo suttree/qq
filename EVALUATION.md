@@ -1,5 +1,7 @@
 # First evaluation
 
+The normal qq command now uses OpenAI by default. The earlier sections record local trials before that change; the latest API verification is recorded below.
+
 These runs check the workflow and expose weaknesses. They do not establish that the model is a reliable coach. No results have been rated by the user yet.
 
 ## OpenAI comparison on PR 15
@@ -89,3 +91,13 @@ Replaying an earlier failed draft through the new flat-array citation repair suc
 A focused discovery-page trial also completed with `no_feedback`, but its draft falsely inferred missing search handling from a controller excerpt that omitted the start of the action. Better source selection matters, and the model must distinguish absent behaviour from code it has not seen.
 
 The request grounding, relevance ordering, and citation-count changes improve the local workflow, but the current 9B model remains an inconsistent judge. A successful no-feedback result cannot establish that the review found all worthwhile issues. Forty-two automated tests pass, and both an actual PR result and a positive synthetic result were opened and navigated in the curses interface. The normal PR workflow remains local, and no model download or change to the Ollama service configuration was required. Sampling settings follow the [Qwen model card](https://huggingface.co/Qwen/Qwen3.5-9B); including the schema in the prompt follows [Ollama's guidance](https://docs.ollama.com/capabilities/structured-outputs).
+
+## OpenAI as the default provider
+
+Following the inconsistent local results, the normal qq command was switched to the OpenAI Responses API with `gpt-6.1-sol` on 1 November 2026. Ollama remains available with `--provider ollama`. The existing prompt, source checks, relevance checks, and diagnostic handling are shared by both providers. The comparison script now uses the same API client as normal reviews.
+
+A fresh invocation of `./qq https://github.com/suttree/commonground/pull/15 --repo /Users/duncan/src/commonground --json` used OpenAI without a provider flag. It returned `no_feedback` in 8.6 seconds with one API call and no correction attempts. Its summary acknowledged the truncated views, styles, and tests. The result is saved locally in `.qq/pr15-openai-default-verified.json`.
+
+The synthetic deletion endpoint, including its explicit route, returned one supported discussion point covering authentication and account ownership in 11.5 seconds. The relevance check retained it, and all three exact citations passed validation without correction. The result is in `.qq/openai-positive-verified.json`.
+
+Both results were opened in the curses interface, including the Context view's provider and model label. Fifty-one automated tests pass. They cover default API routing, explicit local routing, missing credentials, offline examples and evidence collection, model overrides, API failures, response parsing, and preserving source validation. These two live cases support using the API for further trials; they do not establish dependable judgement across all PRs.

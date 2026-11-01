@@ -261,7 +261,7 @@ class ValidationTests(unittest.TestCase):
             packet_path = root / "input.json"
             packet_path.write_text(json.dumps(self.packet))
             stderr = io.StringIO()
-            with patch("sys.argv", ["qq", "--packet", str(packet_path), "--state-dir", str(root), "--json"]), \
+            with patch("sys.argv", ["qq", "--provider", "ollama", "--packet", str(packet_path), "--state-dir", str(root), "--json"]), \
                     patch("qq.core.model_json", side_effect=[self.report, verdict, correction]), \
                     contextlib.redirect_stderr(stderr):
                 self.assertEqual(main(), 1)
@@ -312,6 +312,8 @@ class ValidationTests(unittest.TestCase):
         for error in (URLError(TimeoutError("timed out")),
                       HTTPError("http://localhost:11434/api/chat", 404, "model not found", {}, None),
                       ValueError("invalid JSON")):
+            if isinstance(error, HTTPError):
+                self.addCleanup(error.close)
             with self.subTest(error=error), patch("qq.core.urlopen", side_effect=error):
                 with self.assertRaisesRegex(QQError, "did not return a usable result"):
                     analyse(self.packet, "local-model", "http://localhost:11434")
