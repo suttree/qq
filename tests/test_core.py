@@ -106,7 +106,7 @@ class ValidationTests(unittest.TestCase):
         # Quotation marks inside code are not safe to change by fuzzy matching.
         with self.assertRaises(QQError):
             validate(copy.deepcopy(self.report), self.packet, resolve_citations=True)
-        correction = {"evidence": [[dict(citation, line=3, quote=source)]]}
+        correction = {"evidence": [[{"start_line": 3, "end_line": 3}]]}
         verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "Routine UI change."}]}
         audit = {}
         with patch("qq.core.model_json", side_effect=[self.report, correction, verdict]) as model:
@@ -170,6 +170,24 @@ class ValidationTests(unittest.TestCase):
                          [[dict(citation, quote="invented")]], [[dict(citation, line=True)]]]:
             with self.subTest(evidence=evidence), self.assertRaises(QQError):
                 correct_citations(self.report, {"evidence": evidence}, self.packet)
+
+    def test_correction_copies_exact_ruby_source_with_excerpt_offset(self):
+        source = '    profiles = profiles.where("location LIKE ?", "%#{Submission.sanitize_sql_like(@location)}%") if @location.present?'
+        self.packet["files"][0].update(start_line=39, text=source + "\n    if @skill.present?")
+        self.report["points"][0]["evidence"][0].update(line=39, quote="profiles.where( location LIKE ? )")
+        original = copy.deepcopy(self.report)
+        corrected = correct_citations(self.report, {"evidence": [[{"start_line": 39, "end_line": 40}]]}, self.packet)
+        citation = corrected["points"][0]["evidence"][0]
+        self.assertEqual(citation["quote"], self.packet["files"][0]["text"])
+        self.assertEqual(citation["line"], 39)
+        self.assertEqual(self.report, original)
+        validate(corrected, self.packet)
+
+    def test_correction_rejects_invalid_or_unavailable_ranges(self):
+        self.packet["files"][0]["start_line"] = 39
+        for start, end in [(0, 0), (38, 39), (39, 42), (41, 39), (True, 40), (39, "40")]:
+            with self.subTest(start=start, end=end), self.assertRaises(QQError):
+                correct_citations(self.report, {"evidence": [[{"start_line": start, "end_line": end}]]}, self.packet)
 
     def test_malformed_draft_does_not_trigger_citation_retry(self):
         del self.report["points"][0]["why"]
