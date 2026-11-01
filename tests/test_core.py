@@ -131,6 +131,38 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(audit["citation_correction"], correction)
         self.assertNotIn("decisions", audit)
 
+    def test_inconsistent_status_gets_one_correction_and_preserves_draft(self):
+        for status in ("needs_context", "no_feedback"):
+            with self.subTest(status=status):
+                draft = dict(self.report, status=status)
+                corrected = {"status": status, "summary": "Insufficient evidence.", "points": []}
+                audit = {}
+                with patch("qq.core.model_json", side_effect=[draft, corrected]) as model:
+                    result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
+                self.assertEqual(model.call_count, 2)
+                self.assertEqual(result, corrected)
+                self.assertEqual(audit["raw_draft"], draft)
+                self.assertEqual(audit["status_correction"], corrected)
+
+    def test_status_correction_with_feedback_still_checks_relevance(self):
+        self.packet.update(pr={"title": "Example"}, coverage_notes=[])
+        draft = dict(self.report, points=[])
+        verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "Unsupported."}]}
+        with patch("qq.core.model_json", side_effect=[draft, self.report, verdict]) as model:
+            result = analyse(self.packet, "local-model", "http://localhost:11434")
+        self.assertEqual(model.call_count, 3)
+        self.assertEqual(result["status"], "no_feedback")
+
+    def test_inconsistent_status_correction_still_fails(self):
+        draft = dict(self.report, status="needs_context")
+        audit = {}
+        with patch("qq.core.model_json", side_effect=[draft, draft]) as model:
+            with self.assertRaisesRegex(QQError, "after one correction attempt"):
+                analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual(audit["status_correction"], draft)
+        self.assertNotIn("decisions", audit)
+
     def test_correction_cannot_drop_points_citations_or_change_files(self):
         citation = self.report["points"][0]["evidence"][0]
         for evidence in [[], [[]], [[dict(citation, path="other.rb")]],

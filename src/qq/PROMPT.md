@@ -27,6 +27,8 @@ because an unrelated part of the PR has incomplete context. Do not demand proof 
 safety under hypothetical load. A rake task is not a web request. Never pretend limited
 context is a full review.
 Return JSON only matching the requested schema. summary should be one or two sentences.
+For no_feedback and needs_context, points must be an empty array. Explain missing
+evidence in the needs_context summary, not in a coaching point.
 For no_feedback, briefly explain why there is no worthwhile coaching point in the
 reviewed material. Do not add speculative warnings, such as dependencies possibly
 having breaking changes, that you have not established from evidence.
