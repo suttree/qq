@@ -14,7 +14,8 @@ from qq.tui import paragraphs, wrapped
 
 class ValidationTests(unittest.TestCase):
     def setUp(self):
-        self.packet = {"files": [{"path": "app/a.rb", "side": "head", "start_line": 1,
+        self.packet = {"pr": {"title": "Example"}, "coverage_notes": [],
+                       "files": [{"path": "app/a.rb", "side": "head", "start_line": 1,
                                   "text": "class A\n  send_email\nend"}]}
         self.report = {"status": "feedback", "summary": "Discuss delivery.", "points": [{
             "title": "Delivery", "kind": "discussion", "timing": "later",
@@ -96,40 +97,80 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "no_feedback")
         self.assertEqual(len(audit["draft"]["points"]), 1)
 
-    def test_corrects_changed_quote_characters_before_relevance_check(self):
+    def test_retained_points_still_require_exact_source_citations(self):
         source = '  document.querySelector(".profile-tabs [aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });'
         self.packet["files"][0]["text"] = "// Tabs\n// Keep selected tab visible\n" + source
         self.packet.update(pr={"title": "Example"}, coverage_notes=[])
         citation = self.report["points"][0]["evidence"][0]
         citation.update(line=2, quote=source.strip().replace('"', "'"))
+        self.report["points"][0]["evidence"].extend([
+            dict(citation, line=1, quote="// Tabs"),
+            dict(citation, line=2, quote="// Keep selected tab visible"),
+        ])
         original = copy.deepcopy(self.report)
         # Quotation marks inside code are not safe to change by fuzzy matching.
         with self.assertRaises(QQError):
             validate(copy.deepcopy(self.report), self.packet, resolve_citations=True)
-        correction = {"evidence": [[{"start_line": 3, "end_line": 3}]]}
-        verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "Routine UI change."}]}
+        correction = {"evidence": [{"start_line": 3, "end_line": 3},
+                                   {"start_line": 1, "end_line": 1},
+                                   {"start_line": 2, "end_line": 2}]}
+        verdict = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Supported mechanism."}]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[self.report, correction, verdict]) as model:
+        with patch("qq.core.model_json", side_effect=[self.report, verdict, correction, verdict]) as model:
             result = analyse(self.packet, "local-model", "http://127.0.0.1:11434", audit=audit)
-        self.assertEqual(model.call_count, 3)
-        self.assertEqual(result["status"], "no_feedback")
+        self.assertEqual(model.call_count, 4)
+        ranges = model.call_args_list[2].args[2]["properties"]["evidence"]
+        self.assertEqual((ranges["minItems"], ranges["maxItems"]), (3, 3))
+        self.assertEqual(result["status"], "feedback")
         self.assertEqual(audit["raw_draft"], original)
         self.assertEqual(self.report, original)
-        corrected = copy.deepcopy(audit["draft"])
-        self.assertEqual(corrected["points"][0]["evidence"][0]["quote"], source)
-        corrected["points"][0]["evidence"] = original["points"][0]["evidence"]
-        self.assertEqual(corrected, original)
+        self.assertEqual(audit["pre_citation_check"]["draft"], original)
+        corrected = copy.deepcopy(result["points"][0])
+        self.assertEqual(corrected["evidence"][0]["quote"], source)
+        corrected["evidence"] = original["points"][0]["evidence"]
+        self.assertEqual(corrected, original["points"][0])
+
+    def test_corrected_citations_are_rechecked_before_acceptance(self):
+        self.report["points"][0]["evidence"][0]["quote"] = "invented"
+        keep = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Appears supported."}]}
+        correction = {"evidence": [{"start_line": 3, "end_line": 3}]}
+        discard = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "The selected line does not support the claim."}]}
+        audit = {}
+        with patch("qq.core.model_json", side_effect=[self.report, keep, correction, discard]) as model:
+            result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
+        self.assertEqual(model.call_count, 4)
+        self.assertEqual(result["status"], "no_feedback")
+        self.assertEqual(audit["decisions"], discard)
+        self.assertEqual(audit["pre_citation_check"]["decisions"], keep)
+
+    def test_unsupported_draft_is_discarded_before_quote_repair(self):
+        self.report["points"][0]["evidence"][0].update(line=999, quote="invented")
+        verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "The source does not support the claim."}]}
+        audit = {}
+        with patch("qq.core.model_json", side_effect=[self.report, verdict]) as model:
+            result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual(result["status"], "no_feedback")
+        self.assertEqual(audit["raw_draft"], self.report)
+        self.assertEqual(audit["decisions"], verdict)
+        self.assertNotIn("citation_correction", audit)
+
+    def test_failed_relevance_check_is_not_no_feedback(self):
+        with patch("qq.core.model_json", side_effect=[self.report, QQError("Relevance check unavailable")]):
+            with self.assertRaisesRegex(QQError, "Relevance check unavailable"):
+                analyse(self.packet, "local-model", "http://localhost:11434")
 
     def test_bad_correction_stops_after_one_attempt(self):
         self.report["points"][0]["evidence"][0]["quote"] = "invented"
         correction = {"evidence": [self.report["points"][0]["evidence"]]}
+        verdict = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Supported mechanism."}]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[self.report, correction]) as model:
+        with patch("qq.core.model_json", side_effect=[self.report, verdict, correction]) as model:
             with self.assertRaisesRegex(QQError, "after one correction attempt"):
                 analyse(self.packet, "local-model", "http://127.0.0.1:11434", audit=audit)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 3)
         self.assertEqual(audit["citation_correction"], correction)
-        self.assertNotIn("decisions", audit)
+        self.assertEqual(audit["decisions"], verdict)
 
     def test_inconsistent_status_gets_one_correction_and_preserves_draft(self):
         for status in ("needs_context", "no_feedback"):
@@ -167,16 +208,27 @@ class ValidationTests(unittest.TestCase):
         citation = self.report["points"][0]["evidence"][0]
         for evidence in [[], [[]], [[dict(citation, path="other.rb")]],
                          [[dict(citation, side="base")]], [[citation, citation]],
-                         [[dict(citation, quote="invented")]], [[dict(citation, line=True)]]]:
+                         [[dict(citation, quote="invented")]], [[dict(citation, line=True)]],
+                         [{"start_line": 2, "end_line": 2, "path": "other.rb"}]]:
             with self.subTest(evidence=evidence), self.assertRaises(QQError):
                 correct_citations(self.report, {"evidence": evidence}, self.packet)
+
+    def test_flat_source_ranges_preserve_point_and_citation_order(self):
+        report = copy.deepcopy(self.report)
+        report["points"].append(copy.deepcopy(report["points"][0]))
+        report["points"][0]["evidence"].append(copy.deepcopy(report["points"][0]["evidence"][0]))
+        correction = {"evidence": [{"start_line": line, "end_line": line} for line in (1, 2, 3)]}
+        result = correct_citations(report, correction, self.packet)
+        self.assertEqual([[cite["quote"] for cite in point["evidence"]] for point in result["points"]],
+                         [["class A", "  send_email"], ["end"]])
+        self.assertEqual(report["points"][0]["evidence"][0]["line"], 2)
 
     def test_correction_copies_exact_ruby_source_with_excerpt_offset(self):
         source = '    profiles = profiles.where("location LIKE ?", "%#{Submission.sanitize_sql_like(@location)}%") if @location.present?'
         self.packet["files"][0].update(start_line=39, text=source + "\n    if @skill.present?")
         self.report["points"][0]["evidence"][0].update(line=39, quote="profiles.where( location LIKE ? )")
         original = copy.deepcopy(self.report)
-        corrected = correct_citations(self.report, {"evidence": [[{"start_line": 39, "end_line": 40}]]}, self.packet)
+        corrected = correct_citations(self.report, {"evidence": [{"start_line": 39, "end_line": 40}]}, self.packet)
         citation = corrected["points"][0]["evidence"][0]
         self.assertEqual(citation["quote"], self.packet["files"][0]["text"])
         self.assertEqual(citation["line"], 39)
@@ -187,7 +239,7 @@ class ValidationTests(unittest.TestCase):
         self.packet["files"][0]["start_line"] = 39
         for start, end in [(0, 0), (38, 39), (39, 42), (41, 39), (True, 40), (39, "40")]:
             with self.subTest(start=start, end=end), self.assertRaises(QQError):
-                correct_citations(self.report, {"evidence": [[{"start_line": start, "end_line": end}]]}, self.packet)
+                correct_citations(self.report, {"evidence": [{"start_line": start, "end_line": end}]}, self.packet)
 
     def test_malformed_draft_does_not_trigger_citation_retry(self):
         del self.report["points"][0]["why"]
@@ -203,13 +255,14 @@ class ValidationTests(unittest.TestCase):
         self.packet["id"] = "citation-failure"
         self.report["points"][0]["evidence"][0]["quote"] = "invented"
         correction = {"evidence": [self.report["points"][0]["evidence"]]}
+        verdict = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Supported mechanism."}]}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             packet_path = root / "input.json"
             packet_path.write_text(json.dumps(self.packet))
             stderr = io.StringIO()
             with patch("sys.argv", ["qq", "--packet", str(packet_path), "--state-dir", str(root), "--json"]), \
-                    patch("qq.core.model_json", side_effect=[self.report, correction]), \
+                    patch("qq.core.model_json", side_effect=[self.report, verdict, correction]), \
                     contextlib.redirect_stderr(stderr):
                 self.assertEqual(main(), 1)
             failures = list(root.glob("*.failure.json"))
@@ -225,6 +278,22 @@ class ValidationTests(unittest.TestCase):
         with patch("qq.core.urlopen", side_effect=OSError("model unavailable")):
             with self.assertRaisesRegex(QQError, "did not return a usable result"):
                 analyse(self.packet, "local-model", "http://127.0.0.1:11434")
+
+    def test_ollama_receives_schema_in_both_prompt_and_format(self):
+        import io
+        from qq.core import model_json
+        schema = {"type": "object", "additionalProperties": False,
+                  "properties": {"verdict": {"enum": ["schema-sentinel"]}},
+                  "required": ["verdict"]}
+        envelope = {"message": {"content": '{"verdict": "schema-sentinel"}'}}
+        with patch("qq.core.urlopen", return_value=io.StringIO(json.dumps(envelope))) as request:
+            result = model_json("local-model", "http://localhost:11434", schema,
+                                "Follow the coaching rubric.", {})
+        body = json.loads(request.call_args.args[0].data)
+        self.assertEqual(body["format"], schema)
+        self.assertIn("schema-sentinel", body["messages"][0]["content"])
+        self.assertIn("Follow the coaching rubric.", body["messages"][0]["content"])
+        self.assertEqual(result, {"verdict": "schema-sentinel"})
 
     def test_connection_refused_explains_how_to_start_ollama(self):
         endpoint = "http://localhost:12345"

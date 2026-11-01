@@ -60,6 +60,8 @@ The default model is `qwen3.5:9b-coding`, which was already installed on the dev
 
 Ollama must be running before live analysis. If qq reports that it cannot connect, start Ollama with your usual startup command, or run `ollama serve` in another terminal, then retry qq. The default endpoint is `http://127.0.0.1:11434`. Use `--endpoint URL` if your local Ollama server listens at a different address.
 
+Local requests include the JSON schema in the prompt as well as the API format field, as [Ollama recommends](https://docs.ollama.com/capabilities/structured-outputs). Sampling defaults follow [Qwen's non-thinking settings](https://huggingface.co/Qwen/Qwen3.5-9B), with a fixed sampling seed. Outputs can still vary between runs, and these settings do not guarantee correct reviews.
+
 The UI opens immediately and shows progress while GitHub and Ollama respond. A local model can take several minutes. Press `q` to close. Closing the UI does not cancel a request already running in Ollama.
 
 The UI uses pink for titles and the selected tab, orange for the rationale and assumptions headings, and yellow for principles and cited lines. Diff additions are green and removals are pink. It falls back to basic colours or monochrome when needed.
@@ -102,7 +104,11 @@ The local repository's origin must match the PR. Both commits must exist locally
 
 Context selection is deliberately small. It prioritises changed source and selects related files by names and symbols. It reserves space for related code, but does not trace every caller. The Context view discloses truncation and file coverage. Use repeated `--context-file path/to/file` arguments to include a caller, shared component or test you know matters.
 
-Every accepted finding quotes an exact supplied file excerpt at its actual line. If a model gets indentation or a line number wrong, QQ resolves the quote only when it has one unique match in the supplied file. If a citation still fails, QQ asks the model once to select source line ranges for the citations. QQ copies the exact text from those ranges itself, so the model does not have to reproduce quotation marks or punctuation. Ranges must stay within the supplied excerpt for the original file and side. The coaching text stays unchanged and must still pass the relevance check. Unresolved citations, malformed output and model failures are errors. They are never converted into "no feedback". Failed analyses save a `.failure.json` diagnostic beside the evidence packet, including any draft and citation correction received. Citation checks establish that the code exists, not that the model's interpretation is correct. Draft points then pass through a second model call that can discard unsupported or irrelevant claims. It cannot add new points. The Context view shows its decisions. This check uses the same local model and can still make mistakes.
+Every accepted finding quotes an exact supplied file excerpt at its actual line. QQ validates the draft's structure and status, then checks its claims against the supplied source and PR description. Unsupported points can be discarded before quote repair. The raw draft and rejection reasons remain in the assessment.
+
+Retained points must pass exact citation validation. If the model gets indentation or a line number wrong, QQ resolves the quote only when it has one unique match in the supplied file. If a retained citation still fails, QQ asks once for source line ranges and copies the exact text itself. It then checks the claims again against those selected lines before accepting any feedback. The model cannot add new points during these checks.
+
+Unresolved citations in retained points, malformed output, and model failures are errors. They are never silently converted into "no feedback". Failed analyses save a `.failure.json` diagnostic beside the evidence packet, including drafts and any corrections received. The Context view shows the final relevance decisions. The same local model performs these checks and can still make mistakes.
 
 The model can return three outcomes:
 
@@ -112,7 +118,7 @@ The model can return three outcomes:
 
 No-feedback results are scoped to the supplied material, not a correctness guarantee for the PR.
 
-All inference goes to a localhost Ollama endpoint. No hosted model support is included. GitHub receives the metadata request through `gh`. Obvious credential paths and binary files are excluded, but this is not a general secret scanner. The checkout launcher saves evidence and model output in the project's `.qq/` directory, which is ignored by Git. Treat that directory as source code from the reviewed repository.
+The normal qq command sends inference requests to a localhost Ollama endpoint. The separate OpenAI comparison script sends the saved evidence to OpenAI only when you run it explicitly. GitHub receives the metadata request through `gh`. Obvious credential paths and binary files are excluded, but this is not a general secret scanner. The checkout launcher saves evidence and model output in the project's `.qq/` directory, which is ignored by Git. Treat that directory as source code from the reviewed repository.
 
 ## Repeat an assessment
 

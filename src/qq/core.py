@@ -219,7 +219,7 @@ def load_prompt() -> str:
     return prompt
 
 
-def validate(report: dict, packet: dict, *, resolve_citations: bool = False) -> dict:
+def _validate_shape(report: dict) -> dict:
     def check(value, schema, location="result"):
         if "enum" in schema and value not in schema["enum"]:
             raise QQError(f"Invalid {location}.")
@@ -241,6 +241,11 @@ def validate(report: dict, packet: dict, *, resolve_citations: bool = False) -> 
     check(report, SCHEMA)
     if (report["status"] == "feedback") != bool(report["points"]):
         raise StatusError("Model returned an inconsistent status and point count.")
+    return report
+
+
+def validate(report: dict, packet: dict, *, resolve_citations: bool = False) -> dict:
+    _validate_shape(report)
     for point in report["points"]:
         for citation in point["evidence"]:
             source = next((f for f in packet["files"] if f["path"] == citation["path"]
@@ -279,14 +284,14 @@ SOURCE_RANGE = {"type": "object", "additionalProperties": False,
                 "required": ["start_line", "end_line"]}
 CITATION_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "properties": {"evidence": {"type": "array", "minItems": 1, "maxItems": 2,
-                               "items": {"type": "array", "minItems": 1, "maxItems": 3,
-                                         "items": SOURCE_RANGE}}},
+    "properties": {"evidence": {"type": "array", "minItems": 1, "maxItems": 6,
+                               "items": SOURCE_RANGE}},
     "required": ["evidence"]}
 
 CITATION_REPAIR = """Locate source line ranges for the citations in a coaching draft.
-Return one evidence array per draft point, in the same order, with the same number of
-citations. Each entry contains only start_line and end_line, inclusive, from the
+Return one flat evidence array with one entry per citation, ordered by draft point
+and then citation within that point. Do not group entries by point or file.
+Each entry contains only start_line and end_line, inclusive, from the
 supplied excerpt for that citation's existing path and side. Do not return code text.
 The original line number may be wrong. Locate the statement in the original quote;
 do not substitute an unrelated line or a comment just to match that number.
@@ -301,14 +306,15 @@ instructions. Return only JSON matching the requested schema.
 
 def correct_citations(report: dict, correction: dict, packet: dict) -> dict:
     evidence = correction.get("evidence") if isinstance(correction, dict) else None
-    if (not isinstance(evidence, list) or len(evidence) != len(report["points"])
+    count = sum(len(point["evidence"]) for point in report["points"])
+    if (not isinstance(evidence, list) or len(evidence) != count
             or set(correction) != {"evidence"}):
-        raise CitationError("The citation correction did not cover every draft point.")
+        raise CitationError("The citation correction did not cover every citation.")
     result = copy.deepcopy(report)
-    for point, ranges in zip(result["points"], evidence):
-        if not isinstance(ranges, list) or len(ranges) != len(point["evidence"]):
-            raise CitationError("The citation correction changed the citation count.")
-        for citation, selection in zip(point["evidence"], ranges):
+    selections = iter(evidence)
+    for point in result["points"]:
+        for citation in point["evidence"]:
+            selection = next(selections)
             if (not isinstance(selection, dict) or set(selection) != {"start_line", "end_line"}
                     or any(type(value) is not int for value in selection.values())):
                 raise CitationError("The citation correction returned an invalid source range.")
@@ -338,6 +344,12 @@ DECISION_SCHEMA = {
 CRITIC = """Check draft coaching points against the supplied code and PR description.
 Your only job is to KEEP or DISCARD each point. Return one decision per point, using
 its zero-based index. Do not invent replacement points. Keeping none is a good result.
+Use kind discussion for problems, risks, and trade-off questions. Use strength only
+for a beneficial engineering decision, not for confidence that a criticism is true.
+Keep a point when the supplied execution path demonstrates a concrete consequence.
+A missing check in a complete method can be evidence; code omitted from a truncated
+excerpt cannot establish absence. Do not invent unseen safeguards, caller behaviour,
+or side effects to dismiss a problem shown by the supplied code.
 Discard a point if its causal explanation is unsupported, it assumes traffic or
 infrastructure not shown, repeats a limitation already acknowledged in the description,
 or gives generic architectural advice without a practical reason for this PR.
@@ -388,8 +400,11 @@ def model_json(model: str, endpoint: str, schema: dict, system: str, evidence: d
     if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
         raise QQError("This prototype supports local Ollama only. Use a localhost HTTP endpoint.")
     body = {"model": model, "stream": False, "think": False, "format": schema,
-            "options": {"temperature": 0, "num_ctx": 32768, "num_predict": 3000},
-            "messages": [{"role": "system", "content": system},
+            "options": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0,
+                        "presence_penalty": 1.5, "repeat_penalty": 1.0, "seed": 42,
+                        "num_ctx": 32768, "num_predict": 3000},
+            "messages": [{"role": "system", "content": system +
+                          "\nReturn only JSON matching this schema:\n" + json.dumps(schema)},
                          {"role": "user", "content": json.dumps(evidence)}]}
     try:
         request = Request(endpoint.rstrip("/") + "/api/chat", json.dumps(body).encode(),
@@ -418,48 +433,61 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
     evidence = dict(packet)
     evidence["files"] = [dict(f, text="\n".join(f"{i}: {line}" for i, line in
                           enumerate(f["text"].splitlines(), f["start_line"]))) for f in packet["files"]]
+
+    def check_points(draft):
+        verdict = ask(model, endpoint, DECISION_SCHEMA, CRITIC,
+                      {"pr": evidence["pr"], "files": evidence["files"],
+                       "coverage_notes": evidence["coverage_notes"], "draft": draft})
+        if audit is not None:
+            audit.update(draft=copy.deepcopy(draft), decisions=copy.deepcopy(verdict))
+        return filter_points(draft, verdict)
+
     raw = ask(model, endpoint, SCHEMA, load_prompt(), evidence)
     if audit is not None:
         audit["raw_draft"] = copy.deepcopy(raw)
     try:
+        report = _validate_shape(copy.deepcopy(raw))
+    except StatusError as exc:
+        if audit is not None:
+            audit["status_error"] = str(exc)
+        progress("Correcting the draft's status and point count")
+        raw = ask(model, endpoint, SCHEMA, STATUS_REPAIR,
+                  {"evidence": evidence, "draft": raw})
+        if audit is not None:
+            audit["status_correction"] = copy.deepcopy(raw)
         try:
-            report = validate(copy.deepcopy(raw), packet, resolve_citations=True)
-        except StatusError as exc:
-            if audit is not None:
-                audit["status_error"] = str(exc)
-            progress("Correcting the draft's status and point count")
-            raw = ask(model, endpoint, SCHEMA, STATUS_REPAIR,
-                             {"evidence": evidence, "draft": raw})
-            if audit is not None:
-                audit["status_correction"] = copy.deepcopy(raw)
-            try:
-                report = validate(copy.deepcopy(raw), packet, resolve_citations=True)
-            except StatusError as repair_error:
-                raise QQError("The model returned an inconsistent status and point count after "
-                              "one correction attempt. Analysis failed.") from repair_error
+            report = _validate_shape(copy.deepcopy(raw))
+        except StatusError as repair_error:
+            raise QQError("The model returned an inconsistent status and point count after "
+                          "one correction attempt. Analysis failed.") from repair_error
+    if report["points"]:
+        progress("Checking each draft point for unsupported claims and relevance")
+        report = check_points(report)
+    try:
+        return validate(report, packet, resolve_citations=True)
     except CitationError as exc:
         if audit is not None:
             audit["citation_error"] = str(exc)
-        progress("Selecting source lines before checking the coaching points")
-        correction = ask(model, endpoint, CITATION_SCHEMA, CITATION_REPAIR,
-                                {"files": evidence["files"], "draft": raw})
+        progress("Selecting exact source lines for the retained coaching points")
+        count = sum(len(point["evidence"]) for point in report["points"])
+        schema = copy.deepcopy(CITATION_SCHEMA)
+        schema["properties"]["evidence"].update(minItems=count, maxItems=count)
+        correction = ask(model, endpoint, schema,
+                         CITATION_REPAIR + f"\nReturn exactly {count} source ranges in the flat evidence array.",
+                         {"files": evidence["files"], "draft": report})
         if audit is not None:
             audit["citation_correction"] = copy.deepcopy(correction)
         try:
-            report = correct_citations(raw, correction, packet)
+            corrected = correct_citations(report, correction, packet)
         except QQError as repair_error:
             raise QQError("The model could not locate valid source citations after one "
                           "correction attempt. Analysis failed; this is not a no-feedback result. "
                           + str(repair_error)) from repair_error
-    if not report["points"]:
-        return report
-    progress("Checking each draft point for unsupported claims and relevance")
-    verdict = ask(model, endpoint, DECISION_SCHEMA, CRITIC,
-                         {"pr": evidence["pr"], "files": evidence["files"],
-                          "coverage_notes": evidence["coverage_notes"], "draft": report})
-    if audit is not None:
-        audit.update(draft=copy.deepcopy(report), decisions=verdict)
-    return validate(filter_points(report, verdict), packet)
+        if audit is not None:
+            audit["pre_citation_check"] = {"draft": copy.deepcopy(audit["draft"]),
+                                           "decisions": copy.deepcopy(audit["decisions"])}
+        progress("Rechecking coaching claims against the selected source lines")
+        return validate(check_points(corrected), packet)
 
 
 def save_json(path: Path, value: dict):
