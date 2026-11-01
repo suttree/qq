@@ -412,12 +412,13 @@ def model_json(model: str, endpoint: str, schema: dict, system: str, evidence: d
 
 
 def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: None,
-            audit: dict | None = None) -> dict:
+            audit: dict | None = None, *, model_call=None) -> dict:
+    ask = model_call or model_json
     progress(f"Asking {model} for zero to two coaching points")
     evidence = dict(packet)
     evidence["files"] = [dict(f, text="\n".join(f"{i}: {line}" for i, line in
                           enumerate(f["text"].splitlines(), f["start_line"]))) for f in packet["files"]]
-    raw = model_json(model, endpoint, SCHEMA, load_prompt(), evidence)
+    raw = ask(model, endpoint, SCHEMA, load_prompt(), evidence)
     if audit is not None:
         audit["raw_draft"] = copy.deepcopy(raw)
     try:
@@ -427,7 +428,7 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
             if audit is not None:
                 audit["status_error"] = str(exc)
             progress("Correcting the draft's status and point count")
-            raw = model_json(model, endpoint, SCHEMA, STATUS_REPAIR,
+            raw = ask(model, endpoint, SCHEMA, STATUS_REPAIR,
                              {"evidence": evidence, "draft": raw})
             if audit is not None:
                 audit["status_correction"] = copy.deepcopy(raw)
@@ -440,7 +441,7 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
         if audit is not None:
             audit["citation_error"] = str(exc)
         progress("Selecting source lines before checking the coaching points")
-        correction = model_json(model, endpoint, CITATION_SCHEMA, CITATION_REPAIR,
+        correction = ask(model, endpoint, CITATION_SCHEMA, CITATION_REPAIR,
                                 {"files": evidence["files"], "draft": raw})
         if audit is not None:
             audit["citation_correction"] = copy.deepcopy(correction)
@@ -453,7 +454,7 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
     if not report["points"]:
         return report
     progress("Checking each draft point for unsupported claims and relevance")
-    verdict = model_json(model, endpoint, DECISION_SCHEMA, CRITIC,
+    verdict = ask(model, endpoint, DECISION_SCHEMA, CRITIC,
                          {"pr": evidence["pr"], "files": evidence["files"],
                           "coverage_notes": evidence["coverage_notes"], "draft": report})
     if audit is not None:

@@ -2,6 +2,18 @@
 
 These runs check the workflow and expose weaknesses. They do not establish that the model is a reliable coach. No results have been rated by the user yet.
 
+## OpenAI comparison on PR 15
+
+On 1 November 2026, GPT-6.1 Sol assessed the same saved packet that repeatedly failed with the local model on [PR #15](https://github.com/suttree/commonground/pull/15). The PR's head and base commits still matched that packet when checked. This comparison used the existing prompt, output schema, citation validator, correction paths, and relevance check. Only the model call changed to the OpenAI Responses API with strict structured output and medium reasoning effort.
+
+The API completed in 9.2 seconds with one call and returned `no_feedback`. It required no status or citation correction. It used 15,944 input tokens and 203 output tokens, including 140 reasoning tokens. The relevance check was not invoked because the draft had no points.
+
+Its summary was: "No coaching point stands out in the supplied excerpts. The directory query retains pagination and preloads profile photos, and the visible profile changes respect the stated personal-profile boundary; truncated changes and omitted tests were not assessed."
+
+The response passed validation and acknowledged the evidence limits. The packet contains a truncated diff and partial file excerpts, so this is not an assessment of every change in the PR. This run demonstrates successful completion on one previously failing case. It does not establish that the model can identify useful coaching opportunities or that its abstention is correct.
+
+The result is saved locally in `.qq/pr15-openai-sol-comparison.json`. To view it, run `./qq --open .qq/pr15-openai-sol-comparison.json`. To repeat the comparison on any saved packet, use `scripts/compare_openai.py` with `--packet` and a new `--output` path. The normal qq command continues to use Ollama.
+
 The local model was `qwen3.5:9b-coding`. The source checkout was read at each PR's head and merge base. The app did not modify Commonbound or post feedback to GitHub.
 
 ## Observations

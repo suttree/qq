@@ -64,6 +64,19 @@ The UI opens immediately and shows progress while GitHub and Ollama respond. A l
 
 The UI uses pink for titles and the selected tab, orange for the rationale and assumptions headings, and yellow for principles and cited lines. Diff additions are green and removals are pink. It falls back to basic colours or monochrome when needed.
 
+## Compare a saved packet with OpenAI
+
+With `OPENAI_API_KEY` set in your environment, run this from the qq checkout:
+
+```sh
+python3 scripts/compare_openai.py \
+  --packet .qq/PACKET_ID.packet.json \
+  --output .qq/openai-comparison.json
+./qq --open .qq/openai-comparison.json
+```
+
+This sends the saved PR evidence to OpenAI and uses the same prompt, citation validation, and relevance check as live analysis. The default comparison model is `gpt-6.1-sol`; select another with `--model`. API calls incur usage charges. The output records token usage, elapsed time, and any correction attempts. Each run requires a new output path. Keep results in the ignored `.qq/` directory because they contain source excerpts. The ordinary `qq PR_URL` command still uses Ollama.
+
 ## Edit the coaching prompt
 
 The main model prompt is in [src/qq/PROMPT.md](src/qq/PROMPT.md). Edit this UTF-8 file to change the coaching instructions. QQ reads it for each new assessment, regardless of the working directory. The file is also included in package installations. A missing or empty prompt stops the assessment with an error.
