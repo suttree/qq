@@ -1,10 +1,12 @@
 import copy
+import errno
 import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from qq.core import QQError, analyse, collect, correct_citations, filter_points, parse_pr, safe_path, validate
 from qq.tui import paragraphs, wrapped
@@ -173,6 +175,27 @@ class ValidationTests(unittest.TestCase):
         with patch("qq.core.urlopen", side_effect=OSError("model unavailable")):
             with self.assertRaisesRegex(QQError, "did not return a usable result"):
                 analyse(self.packet, "local-model", "http://127.0.0.1:11434")
+
+    def test_connection_refused_explains_how_to_start_ollama(self):
+        endpoint = "http://localhost:12345"
+        refused = ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused")
+        for error in (refused, URLError(refused)):
+            with self.subTest(error=error), patch("qq.core.urlopen", side_effect=error):
+                with self.assertRaises(QQError) as raised:
+                    analyse(self.packet, "local-model", endpoint)
+                message = str(raised.exception)
+                self.assertIn(f"Cannot connect to Ollama at {endpoint}", message)
+                self.assertIn("Ollama may be stopped", message)
+                self.assertIn("ollama serve", message)
+                self.assertIn("--endpoint", message)
+
+    def test_other_model_errors_do_not_claim_ollama_is_stopped(self):
+        for error in (URLError(TimeoutError("timed out")),
+                      HTTPError("http://localhost:11434/api/chat", 404, "model not found", {}, None),
+                      ValueError("invalid JSON")):
+            with self.subTest(error=error), patch("qq.core.urlopen", side_effect=error):
+                with self.assertRaisesRegex(QQError, "did not return a usable result"):
+                    analyse(self.packet, "local-model", "http://localhost:11434")
 
     def test_rejects_remote_model_endpoint(self):
         with self.assertRaises(QQError):

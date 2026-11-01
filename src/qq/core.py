@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import json
 import re
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
@@ -367,6 +369,14 @@ def model_json(model: str, endpoint: str, schema: dict, system: str, evidence: d
             raise QQError("The model ran out of output space. No feedback was accepted.")
         return json.loads(envelope["message"]["content"])
     except (OSError, ValueError, KeyError) as exc:
+        reason = exc.reason if isinstance(exc, URLError) else exc
+        if isinstance(reason, OSError) and reason.errno == errno.ECONNREFUSED:
+            raise QQError(
+                f"Cannot connect to Ollama at {endpoint}. Ollama may be stopped. "
+                "Start Ollama, then run qq again. To start it from the CLI, run "
+                "`ollama serve` in another terminal. If Ollama uses a different "
+                "address, pass it with --endpoint."
+            ) from exc
         raise QQError(f"Ollama did not return a usable result: {exc}") from exc
 
 

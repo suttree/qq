@@ -58,6 +58,8 @@ The launcher works from any directory without installing the Python package. It 
 
 The default model is `qwen3.5:9b-coding`, which was already installed on the development machine. Select another installed model with `--model NAME` or `QQ_MODEL`. QQ never downloads models. The selected model must support Ollama's JSON schema output and `think: false`.
 
+Ollama must be running before live analysis. If qq reports that it cannot connect, start Ollama with your usual startup command, or run `ollama serve` in another terminal, then retry qq. The default endpoint is `http://127.0.0.1:11434`. Use `--endpoint URL` if your local Ollama server listens at a different address.
+
 The UI opens immediately and shows progress while GitHub and Ollama respond. A local model can take several minutes. Press `q` to close. Closing the UI does not cancel a request already running in Ollama.
 
 The UI uses pink for titles and the selected tab, orange for the rationale and assumptions headings, and yellow for principles and cited lines. Diff additions are green and removals are pink. It falls back to basic colours or monochrome when needed.
