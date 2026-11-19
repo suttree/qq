@@ -103,6 +103,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(len(audit["draft"]["points"]), 1)
 
     def test_correctness_pass_runs_first_and_two_bugs_take_priority(self):
+        self.packet["contract"] = {"name": "spec.md", "text": "The feed requires an advert."}
         bugs = copy.deepcopy(self.report)
         bugs["points"].append(dict(bugs["points"][0], title="Another issue"))
         keep = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Supported."}]}
@@ -113,6 +114,8 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "feedback")
         self.assertEqual(result["points"], bugs["points"])
         self.assertIn("bugs and broken contracts", model.call_args_list[0].args[3])
+        for call in model.call_args_list[:2]:
+            self.assertEqual(call.args[4]["contract"], self.packet["contract"])
         self.assertIn("style choices", model.call_args_list[2].args[3])
         self.assertEqual(model.call_args_list[2].args[4]["correctness_findings"], bugs["points"])
         self.assertEqual(audit["correctness"]["raw_draft"], bugs)

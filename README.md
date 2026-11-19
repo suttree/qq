@@ -81,6 +81,10 @@ The UI opens immediately and shows progress while GitHub and the selected provid
 
 The UI uses pink for titles and the selected tab, orange for the rationale and assumptions headings, and yellow for principles and cited lines. Diff additions are green and removals are pink. It falls back to basic colours or monochrome when needed.
 
+## Review against an external specification
+
+Use `--contract-file PATH` with a PR URL or `--packet` to review code against an external specification. Supply a UTF-8 excerpt of up to 12,000 characters and include the source URL or section name in the file. QQ saves the excerpt with the evidence packet and sends it to the selected model provider during review.
+
 ## Edit the coaching prompt
 
 The main model prompt is in [src/qq/PROMPT.md](src/qq/PROMPT.md). Edit this UTF-8 file to change the coaching instructions. QQ reads it for each new assessment, regardless of the working directory. The file is also included in package installations. A missing or empty prompt stops the assessment with an error.

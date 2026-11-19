@@ -24,6 +24,8 @@ def main():
     parser.add_argument("--model", help=f"Model name, default: {OPENAI_MODEL} for OpenAI, {OLLAMA_MODEL} for Ollama")
     parser.add_argument("--endpoint", help="Local Ollama endpoint, requires --provider ollama")
     parser.add_argument("--context-file", action="append", default=[], help="Additional repository-relative file")
+    parser.add_argument("--contract-file", type=Path,
+                        help="UTF-8 specification excerpt to include in the review evidence")
     parser.add_argument("--state-dir", type=Path, default=Path(".qq"))
     parser.add_argument("--open", type=Path, help="Open a saved review without GitHub or a model")
     parser.add_argument("--packet", type=Path, help="Analyse a previously collected evidence packet")
@@ -38,6 +40,8 @@ def main():
         args.open = Path(__file__).with_name("examples") / "suggestions.json"
     if args.collect_only and args.open:
         parser.error("--collect-only cannot be used with --open or --example.")
+    if args.contract_file and args.open:
+        parser.error("--contract-file requires a PR URL or --packet.")
     if args.endpoint and args.provider != "ollama":
         parser.error("--endpoint requires --provider ollama. OpenAI uses https://api.openai.com.")
     if args.provider == "openai":
@@ -62,6 +66,15 @@ def main():
                 progress(f"Using local Ollama with {args.model}")
         packet = json.loads(args.packet.read_text()) if args.packet else collect(
             args.pr, args.repo, args.context_file, progress)
+        if args.contract_file:
+            with args.contract_file.open(encoding="utf-8") as contract_file:
+                contract = contract_file.read(12001)
+            if len(contract) > 12000 or not contract.strip():
+                raise QQError("The contract file must contain between 1 and 12,000 characters.")
+            packet["contract"] = {"name": args.contract_file.name, "text": contract}
+            packet["id"] = hashlib.sha256(json.dumps(
+                {key: value for key, value in packet.items() if key != "id"},
+                sort_keys=True).encode()).hexdigest()[:16]
         save_json(args.state_dir / (packet["id"] + ".packet.json"), packet)
         if args.collect_only:
             return packet
