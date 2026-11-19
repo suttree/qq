@@ -55,7 +55,7 @@ def source_path(path: str) -> bool:
     return safe_path(path) and (Path(path).suffix in {
         ".rb", ".py", ".js", ".ts", ".tsx", ".jsx", ".lua", ".go", ".rs", ".swift",
         ".erb", ".html", ".css", ".scss", ".yml", ".yaml", ".sql", ".md", ".toml",
-        ".json", ".rake", ".sh", ".conf"
+        ".json", ".rake", ".sh", ".conf", ".xml"
     } or Path(path).name in {"Gemfile", "Dockerfile", "Rakefile", "Procfile"})
 
 

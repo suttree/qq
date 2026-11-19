@@ -358,7 +358,9 @@ class HistoricalContextTests(unittest.TestCase):
             git("commit", "-qm", "base")
             base = git("rev-parse", "HEAD")
             (repo / "model.rb").write_text(padding + "class Model\n  def historical; end\nend\n")
-            git("commit", "-qam", "feature")
+            (repo / "expected.xml").write_text("<Feed><Job /></Feed>\n")
+            git("add", "model.rb", "expected.xml")
+            git("commit", "-qm", "feature")
             head = git("rev-parse", "HEAD")
             (repo / "model.rb").write_text("UNCOMMITTED CURRENT WORK\n")
             (repo / ".env").write_text("DO_NOT_INCLUDE=secret\n")
@@ -369,8 +371,10 @@ class HistoricalContextTests(unittest.TestCase):
                 return json.dumps(meta) if args[0] == "gh" else real_run(*args, **kwargs)
             with patch("qq.core.run", fake_run):
                 packet = collect(meta["url"], repo)
-            self.assertIn("def historical", packet["files"][0]["text"])
-            self.assertGreater(packet["files"][0]["start_line"], 1)
+            excerpts = {file["path"]: file for file in packet["files"]}
+            self.assertIn("def historical", excerpts["model.rb"]["text"])
+            self.assertGreater(excerpts["model.rb"]["start_line"], 1)
+            self.assertEqual(excerpts["expected.xml"]["text"], "<Feed><Job /></Feed>")
             self.assertNotIn("UNCOMMITTED", json.dumps(packet))
             self.assertNotIn("DO_NOT_INCLUDE", json.dumps(packet))
             self.assertEqual((repo / "model.rb").read_text(), "UNCOMMITTED CURRENT WORK\n")
