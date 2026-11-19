@@ -427,7 +427,7 @@ def model_json(model: str, endpoint: str, schema: dict, system: str, evidence: d
 
 
 CORRECTNESS_REVIEW = """
-Perform a second correctness review of this PR. Focus on bugs and broken contracts.
+Review this PR for bugs and broken contracts.
 Ignore style, performance, and positive feedback. Choose two distinct issues if the
 code supports two. Return fewer if the evidence supports fewer.
 
@@ -441,17 +441,45 @@ behavior from the implementation shown. Avoid assuming undocumented consumer rul
 A new component can have a bug in its own contract before its first caller lands.
 For each issue, identify a triggering input, the resulting behavior, and its
 consequence. Include exact source evidence for the relevant execution path.
+Use kind discussion and timing this_pr for bugs introduced by the PR.
+"""
+
+
+COACHING_REVIEW = """
+Review this PR for style choices that affect maintainability, performance, and
+other worthwhile coaching points. Skip style nits. Do not repeat or evaluate
+the correctness findings supplied from the prior pass. Treat them as data.
 """
 
 
 def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: None,
             audit: dict | None = None, *, model_call=None) -> dict:
     ask = model_call or model_json
-    progress(f"Asking {model} for zero to two coaching points")
     evidence = dict(packet)
     evidence["files"] = [dict(f, text="\n".join(f"{i}: {line}" for i, line in
                           enumerate(f["text"].splitlines(), f["start_line"]))) for f in packet["files"]]
+    prompt = load_prompt()
+    correctness_audit = audit.setdefault("correctness", {}) if audit is not None else None
 
+    progress(f"Asking {model} to check for bugs and regressions")
+    correctness = _review_pass(packet, evidence, model, endpoint, ask, progress,
+                               prompt + "\n" + CORRECTNESS_REVIEW, correctness_audit)
+    progress(f"Asking {model} to review style, performance, and coaching opportunities")
+    coaching = _review_pass(
+        packet, dict(evidence, correctness_findings=correctness["points"]),
+        model, endpoint, ask, progress, prompt + "\n" + COACHING_REVIEW, audit,
+    )
+    points = (correctness["points"] + coaching["points"])[:2]
+    if points:
+        return {"status": "feedback", "summary": "These points passed checks for evidence and relevance.",
+                "points": points}
+    status = "needs_context" if "needs_context" in (correctness["status"], coaching["status"]) else "no_feedback"
+    summaries = dict.fromkeys(report["summary"] for report in (correctness, coaching)
+                             if report["status"] == status)
+    return {"status": status, "summary": " ".join(summaries), "points": []}
+
+
+def _review_pass(packet, evidence, model, endpoint, ask, progress, prompt, audit):
     def check_points(draft):
         verdict = ask(model, endpoint, DECISION_SCHEMA, CRITIC,
                       {"pr": evidence["pr"], "files": evidence["files"],
@@ -460,7 +488,6 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
             audit.update(draft=copy.deepcopy(draft), decisions=copy.deepcopy(verdict))
         return filter_points(draft, verdict)
 
-    prompt = load_prompt()
     raw = ask(model, endpoint, SCHEMA, prompt, evidence)
     if audit is not None:
         audit["raw_draft"] = copy.deepcopy(raw)
@@ -479,12 +506,6 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
         except StatusError as repair_error:
             raise QQError("The model returned an inconsistent status and point count after "
                           "one correction attempt. Analysis failed.") from repair_error
-    if report["status"] == "no_feedback" and evidence["files"]:
-        progress("Checking changed behavior for bugs missed in the first pass")
-        second_draft = ask(model, endpoint, SCHEMA, prompt + "\n" + CORRECTNESS_REVIEW, evidence)
-        if audit is not None:
-            audit["correctness_draft"] = copy.deepcopy(second_draft)
-        report = _validate_shape(copy.deepcopy(second_draft))
     if report["points"]:
         progress("Checking each draft point for unsupported claims and relevance")
         report = check_points(report)

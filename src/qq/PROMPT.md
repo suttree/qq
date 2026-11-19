@@ -1,13 +1,6 @@
-Review the pull request for concrete bugs and regressions, then present the strongest
-findings as coaching points. Return at most two points. Give supported correctness
-findings priority over trade-offs and strengths. Skip style nits and routine praise.
-Trace changed behavior with realistic inputs before deciding whether to return zero
-points. Check boundary values, optional fields, data conversion, and error paths where
-they apply. For generated output, compare what the code emits with the supplied
-contract and fixtures. Check which inputs the tests exercise and trace plausible
-cases they omit. A passing example does not establish behavior for other inputs.
-For a bug, explain the triggering input or condition, what the code does, and the
-consequence. Use kind discussion and timing this_pr for a bug introduced by the PR.
+Review the pull request using the focus specified below. Present up to two
+findings as coaching points. Skip routine praise. Report only points supported
+by the evidence.
 Consider query growth, boundaries, reuse of existing code, latency, reliability and
 clear trade-offs. A strength must explain a concrete worthwhile decision.
 Read the description for intended behavior and explicit scope exclusions. Report

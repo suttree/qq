@@ -32,8 +32,8 @@ class ProviderCLITests(unittest.TestCase):
             argv = ["qq", "--packet", str(packet), "--state-dir", str(root), "--json", *arguments]
             with patch.dict(os.environ, env if env is not None else {"OPENAI_API_KEY": "test-api-key"}, clear=True), \
                     patch("sys.argv", argv), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), \
-                    patch("qq.providers.urlopen", return_value=io.StringIO(json.dumps(envelope)), side_effect=api_error) as api, \
-                    patch("qq.core.urlopen", return_value=io.StringIO(json.dumps({"message": {"content": json.dumps(self.report)}}))) as local:
+                    patch("qq.providers.urlopen", side_effect=api_error or (lambda *args, **kwargs: io.StringIO(json.dumps(envelope)))) as api, \
+                    patch("qq.core.urlopen", side_effect=lambda *args, **kwargs: io.StringIO(json.dumps({"message": {"content": json.dumps(self.report)}}))) as local:
                 code = main()
             return {"code": code, "output": json.loads(stdout.getvalue()) if stdout.getvalue() else None,
                     "stderr": stderr.getvalue(), "api": api, "local": local,

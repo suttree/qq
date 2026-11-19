@@ -14,6 +14,7 @@ from qq.tui import paragraphs, wrapped
 
 class ValidationTests(unittest.TestCase):
     def setUp(self):
+        self.empty = {"status": "no_feedback", "summary": "No correctness issue.", "points": []}
         self.packet = {"pr": {"title": "Example"}, "coverage_notes": [],
                        "files": [{"path": "app/a.rb", "side": "head", "start_line": 1,
                                   "text": "class A\n  send_email\nend"}]}
@@ -91,30 +92,27 @@ class ValidationTests(unittest.TestCase):
         self.packet.update(pr={"title": "Example"}, coverage_notes=[])
         verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "Unsupported impact."}]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[self.report, verdict]) as model:
+        with patch("qq.core.model_json", side_effect=[self.empty, self.report, verdict]) as model:
             result = analyse(self.packet, "local-model", "http://127.0.0.1:11434", audit=audit)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 3)
         self.assertEqual(result["status"], "no_feedback")
         self.assertEqual(len(audit["draft"]["points"]), 1)
 
-    def test_empty_draft_gets_a_correctness_review_and_validates_both_findings(self):
-        self.packet.update(pr={"title": "Example"}, coverage_notes=[])
-        empty = {"status": "no_feedback", "summary": "Examples match.", "points": []}
-        second = copy.deepcopy(self.report)
-        second_point = dict(second["points"][0], title="Another issue")
-        second["points"].append(second_point)
-        verdict = {"decisions": [
-            {"index": index, "keep": True, "kind": "discussion", "reason": "Supported."}
-            for index in range(2)
-        ]}
+    def test_correctness_pass_runs_first_and_two_bugs_take_priority(self):
+        bugs = copy.deepcopy(self.report)
+        bugs["points"].append(dict(bugs["points"][0], title="Another issue"))
+        keep = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Supported."}]}
+        keep_both = {"decisions": keep["decisions"] + [dict(keep["decisions"][0], index=1)]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[empty, second, verdict]) as model:
+        with patch("qq.core.model_json", side_effect=[bugs, keep_both, self.report, keep]) as model:
             result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
         self.assertEqual(result["status"], "feedback")
-        self.assertEqual(result["points"], second["points"])
-        self.assertIn("second correctness review", model.call_args_list[1].args[3])
-        self.assertEqual(audit["raw_draft"], empty)
-        self.assertEqual(audit["correctness_draft"], second)
+        self.assertEqual(result["points"], bugs["points"])
+        self.assertIn("bugs and broken contracts", model.call_args_list[0].args[3])
+        self.assertIn("style choices", model.call_args_list[2].args[3])
+        self.assertEqual(model.call_args_list[2].args[4]["correctness_findings"], bugs["points"])
+        self.assertEqual(audit["correctness"]["raw_draft"], bugs)
+        self.assertEqual(audit["raw_draft"], self.report)
 
     def test_retained_points_still_require_exact_source_citations(self):
         source = '  document.querySelector(".profile-tabs [aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });'
@@ -135,10 +133,10 @@ class ValidationTests(unittest.TestCase):
                                    {"start_line": 2, "end_line": 2}]}
         verdict = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Supported mechanism."}]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[self.report, verdict, correction, verdict]) as model:
+        with patch("qq.core.model_json", side_effect=[self.empty, self.report, verdict, correction, verdict]) as model:
             result = analyse(self.packet, "local-model", "http://127.0.0.1:11434", audit=audit)
-        self.assertEqual(model.call_count, 4)
-        ranges = model.call_args_list[2].args[2]["properties"]["evidence"]
+        self.assertEqual(model.call_count, 5)
+        ranges = model.call_args_list[3].args[2]["properties"]["evidence"]
         self.assertEqual((ranges["minItems"], ranges["maxItems"]), (3, 3))
         self.assertEqual(result["status"], "feedback")
         self.assertEqual(audit["raw_draft"], original)
@@ -155,9 +153,9 @@ class ValidationTests(unittest.TestCase):
         correction = {"evidence": [{"start_line": 3, "end_line": 3}]}
         discard = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "The selected line does not support the claim."}]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[self.report, keep, correction, discard]) as model:
+        with patch("qq.core.model_json", side_effect=[self.empty, self.report, keep, correction, discard]) as model:
             result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
-        self.assertEqual(model.call_count, 4)
+        self.assertEqual(model.call_count, 5)
         self.assertEqual(result["status"], "no_feedback")
         self.assertEqual(audit["decisions"], discard)
         self.assertEqual(audit["pre_citation_check"]["decisions"], keep)
@@ -166,16 +164,16 @@ class ValidationTests(unittest.TestCase):
         self.report["points"][0]["evidence"][0].update(line=999, quote="invented")
         verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "The source does not support the claim."}]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[self.report, verdict]) as model:
+        with patch("qq.core.model_json", side_effect=[self.empty, self.report, verdict]) as model:
             result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 3)
         self.assertEqual(result["status"], "no_feedback")
         self.assertEqual(audit["raw_draft"], self.report)
         self.assertEqual(audit["decisions"], verdict)
         self.assertNotIn("citation_correction", audit)
 
     def test_failed_relevance_check_is_not_no_feedback(self):
-        with patch("qq.core.model_json", side_effect=[self.report, QQError("Relevance check unavailable")]):
+        with patch("qq.core.model_json", side_effect=[self.empty, self.report, QQError("Relevance check unavailable")]):
             with self.assertRaisesRegex(QQError, "Relevance check unavailable"):
                 analyse(self.packet, "local-model", "http://localhost:11434")
 
@@ -184,10 +182,10 @@ class ValidationTests(unittest.TestCase):
         correction = {"evidence": [self.report["points"][0]["evidence"]]}
         verdict = {"decisions": [{"index": 0, "keep": True, "kind": "discussion", "reason": "Supported mechanism."}]}
         audit = {}
-        with patch("qq.core.model_json", side_effect=[self.report, verdict, correction]) as model:
+        with patch("qq.core.model_json", side_effect=[self.empty, self.report, verdict, correction]) as model:
             with self.assertRaisesRegex(QQError, "after one correction attempt"):
                 analyse(self.packet, "local-model", "http://127.0.0.1:11434", audit=audit)
-        self.assertEqual(model.call_count, 3)
+        self.assertEqual(model.call_count, 4)
         self.assertEqual(audit["citation_correction"], correction)
         self.assertEqual(audit["decisions"], verdict)
 
@@ -197,13 +195,12 @@ class ValidationTests(unittest.TestCase):
                 draft = dict(self.report, status=status)
                 corrected = {"status": status, "summary": "Insufficient evidence.", "points": []}
                 audit = {}
-                responses = [draft, corrected]
-                if status == "no_feedback":
-                    responses.append(corrected)
+                responses = [self.empty, draft, corrected]
                 with patch("qq.core.model_json", side_effect=responses) as model:
                     result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
                 self.assertEqual(model.call_count, len(responses))
-                self.assertEqual(result, corrected)
+                self.assertEqual(result, corrected if status == "needs_context" else
+                                 dict(corrected, summary=self.empty["summary"] + " " + corrected["summary"]))
                 self.assertEqual(audit["raw_draft"], draft)
                 self.assertEqual(audit["status_correction"], corrected)
 
@@ -211,18 +208,18 @@ class ValidationTests(unittest.TestCase):
         self.packet.update(pr={"title": "Example"}, coverage_notes=[])
         draft = dict(self.report, points=[])
         verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "Unsupported."}]}
-        with patch("qq.core.model_json", side_effect=[draft, self.report, verdict]) as model:
+        with patch("qq.core.model_json", side_effect=[self.empty, draft, self.report, verdict]) as model:
             result = analyse(self.packet, "local-model", "http://localhost:11434")
-        self.assertEqual(model.call_count, 3)
+        self.assertEqual(model.call_count, 4)
         self.assertEqual(result["status"], "no_feedback")
 
     def test_inconsistent_status_correction_still_fails(self):
         draft = dict(self.report, status="needs_context")
         audit = {}
-        with patch("qq.core.model_json", side_effect=[draft, draft]) as model:
+        with patch("qq.core.model_json", side_effect=[self.empty, draft, draft]) as model:
             with self.assertRaisesRegex(QQError, "after one correction attempt"):
                 analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 3)
         self.assertEqual(audit["status_correction"], draft)
         self.assertNotIn("decisions", audit)
 
@@ -284,7 +281,7 @@ class ValidationTests(unittest.TestCase):
             packet_path.write_text(json.dumps(self.packet))
             stderr = io.StringIO()
             with patch("sys.argv", ["qq", "--provider", "ollama", "--packet", str(packet_path), "--state-dir", str(root), "--json"]), \
-                    patch("qq.core.model_json", side_effect=[self.report, verdict, correction]), \
+                    patch("qq.core.model_json", side_effect=[self.empty, self.report, verdict, correction]), \
                     contextlib.redirect_stderr(stderr):
                 self.assertEqual(main(), 1)
             failures = list(root.glob("*.failure.json"))

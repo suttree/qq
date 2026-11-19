@@ -2,6 +2,8 @@
 
 Code Coach helps you prepare a conversation about a pull request. Run its CLI with `qq`. It returns zero, one or two coaching points, each with code evidence, a reason to discuss it, a question to ask, and a principle to explain.
 
+Each review checks for bugs and regressions first, then reviews style, performance, and other coaching opportunities. Supported bugs take priority in the two-point result.
+
 This is an early prototype. Reviews use the OpenAI API by default. Coaching judgement is still being evaluated. See [the evaluation notes](EVALUATION.md) before relying on its output.
 
 ## Get started
