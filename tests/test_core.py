@@ -97,6 +97,25 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(result["status"], "no_feedback")
         self.assertEqual(len(audit["draft"]["points"]), 1)
 
+    def test_empty_draft_gets_a_correctness_review_and_validates_both_findings(self):
+        self.packet.update(pr={"title": "Example"}, coverage_notes=[])
+        empty = {"status": "no_feedback", "summary": "Examples match.", "points": []}
+        second = copy.deepcopy(self.report)
+        second_point = dict(second["points"][0], title="Another issue")
+        second["points"].append(second_point)
+        verdict = {"decisions": [
+            {"index": index, "keep": True, "kind": "discussion", "reason": "Supported."}
+            for index in range(2)
+        ]}
+        audit = {}
+        with patch("qq.core.model_json", side_effect=[empty, second, verdict]) as model:
+            result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
+        self.assertEqual(result["status"], "feedback")
+        self.assertEqual(result["points"], second["points"])
+        self.assertIn("second correctness review", model.call_args_list[1].args[3])
+        self.assertEqual(audit["raw_draft"], empty)
+        self.assertEqual(audit["correctness_draft"], second)
+
     def test_retained_points_still_require_exact_source_citations(self):
         source = '  document.querySelector(".profile-tabs [aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });'
         self.packet["files"][0]["text"] = "// Tabs\n// Keep selected tab visible\n" + source
@@ -178,9 +197,12 @@ class ValidationTests(unittest.TestCase):
                 draft = dict(self.report, status=status)
                 corrected = {"status": status, "summary": "Insufficient evidence.", "points": []}
                 audit = {}
-                with patch("qq.core.model_json", side_effect=[draft, corrected]) as model:
+                responses = [draft, corrected]
+                if status == "no_feedback":
+                    responses.append(corrected)
+                with patch("qq.core.model_json", side_effect=responses) as model:
                     result = analyse(self.packet, "local-model", "http://localhost:11434", audit=audit)
-                self.assertEqual(model.call_count, 2)
+                self.assertEqual(model.call_count, len(responses))
                 self.assertEqual(result, corrected)
                 self.assertEqual(audit["raw_draft"], draft)
                 self.assertEqual(audit["status_correction"], corrected)

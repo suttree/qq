@@ -426,6 +426,24 @@ def model_json(model: str, endpoint: str, schema: dict, system: str, evidence: d
         raise QQError(f"Ollama did not return a usable result: {exc}") from exc
 
 
+CORRECTNESS_REVIEW = """
+Perform a second correctness review of this PR. Focus on bugs and broken contracts.
+Ignore style, performance, and positive feedback. Choose two distinct issues if the
+code supports two. Return fewer if the evidence supports fewer.
+
+Start at the changed entry points. Trace concrete inputs through the implementation,
+including inputs accepted by the public types but absent from the supplied tests.
+For a serializer, trace an entire record for each operation. Check whether the
+accepted combinations of record types and operation values produce the right shape.
+Check empty collections and the effect of missing, blank or out-of-range values.
+Use tests and fixtures as examples of intent. Seek inputs that distinguish correct
+behavior from the implementation shown. Avoid assuming undocumented consumer rules.
+A new component can have a bug in its own contract before its first caller lands.
+For each issue, identify a triggering input, the resulting behavior, and its
+consequence. Include exact source evidence for the relevant execution path.
+"""
+
+
 def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: None,
             audit: dict | None = None, *, model_call=None) -> dict:
     ask = model_call or model_json
@@ -442,7 +460,8 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
             audit.update(draft=copy.deepcopy(draft), decisions=copy.deepcopy(verdict))
         return filter_points(draft, verdict)
 
-    raw = ask(model, endpoint, SCHEMA, load_prompt(), evidence)
+    prompt = load_prompt()
+    raw = ask(model, endpoint, SCHEMA, prompt, evidence)
     if audit is not None:
         audit["raw_draft"] = copy.deepcopy(raw)
     try:
@@ -460,6 +479,12 @@ def analyse(packet: dict, model: str, endpoint: str, progress=lambda message: No
         except StatusError as repair_error:
             raise QQError("The model returned an inconsistent status and point count after "
                           "one correction attempt. Analysis failed.") from repair_error
+    if report["status"] == "no_feedback" and evidence["files"]:
+        progress("Checking changed behavior for bugs missed in the first pass")
+        second_draft = ask(model, endpoint, SCHEMA, prompt + "\n" + CORRECTNESS_REVIEW, evidence)
+        if audit is not None:
+            audit["correctness_draft"] = copy.deepcopy(second_draft)
+        report = _validate_shape(copy.deepcopy(second_draft))
     if report["points"]:
         progress("Checking each draft point for unsupported claims and relevance")
         report = check_points(report)
