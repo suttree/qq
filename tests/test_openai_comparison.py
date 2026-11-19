@@ -34,7 +34,7 @@ class OpenAIClientTests(unittest.TestCase):
     def test_incomplete_refused_and_invalid_outputs_are_errors(self):
         envelopes = [
             None,
-            {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}},
+            {"status": "incomplete", "incomplete_details": {"reason": "content_filter"}},
             {"status": "completed", "output": {}},
             {"status": "completed", "output": [{"type": "message", "content": None}]},
             {"status": "completed", "output": [{"type": "message", "content": [{"type": "refusal"}]}]},
@@ -45,6 +45,25 @@ class OpenAIClientTests(unittest.TestCase):
         for envelope in envelopes:
             with self.subTest(envelope=envelope), self.assertRaises(QQError):
                 self.call(envelope)
+
+    def test_output_limit_retries_once_and_keeps_both_attempts(self):
+        incomplete = {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"},
+                      "output": [{"type": "message", "content": [{"type": "output_text", "text": "{"}]}]}
+        completed = {"status": "completed", "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": '{"points": []}'}]}]}
+        for second in (completed, incomplete):
+            with self.subTest(status=second["status"]):
+                client = OpenAIClient("test-key")
+                responses = [io.StringIO(json.dumps(envelope)) for envelope in (incomplete, second)]
+                with patch("qq.providers.urlopen", side_effect=responses) as request:
+                    if second is completed:
+                        self.assertEqual(client("test-model", "", {}, "Review code", {}), {"points": []})
+                    else:
+                        with self.assertRaisesRegex(QQError, "max_output_tokens"):
+                            client("test-model", "", {}, "Review code", {})
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual([call["max_output_tokens"] for call in client.calls], [8192, 16384])
+                self.assertEqual(client.calls[0]["incomplete_reason"], "max_output_tokens")
 
     def test_http_error_does_not_expose_key_from_response(self):
         client = OpenAIClient("test-key")

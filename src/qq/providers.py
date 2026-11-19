@@ -30,35 +30,16 @@ class OpenAIClient:
             "text": {"format": {"type": "json_schema", "name": "qq_result",
                                 "strict": True, "schema": schema}},
         }
-        request = Request("https://api.openai.com/v1/responses", json.dumps(body).encode(),
-                          {"Authorization": "Bearer " + self.api_key,
-                           "Content-Type": "application/json"})
-        started = time.monotonic()
-        try:
-            with urlopen(request, timeout=300) as response:
-                envelope = json.load(response)
-        except HTTPError as exc:
-            self.calls.append({"model": model, "http_status": exc.code,
-                               "elapsed_seconds": round(time.monotonic() - started, 2)})
-            # Authentication errors can echo part of a key. Never print the body.
-            detail = {
-                401: "The API key was rejected. Check OPENAI_API_KEY.",
-                403: "The API key does not have permission to use this model.",
-                404: f"The model {model} is unavailable to this API key. Check --model.",
-                429: "The API rate limit or quota was reached. Check API billing and usage limits.",
-            }.get(exc.code, "Check API access and service availability.")
-            exc.close()
-            raise QQError(f"OpenAI returned HTTP {exc.code}. {detail}") from exc
-        except (URLError, OSError, ValueError) as exc:
-            raise QQError("Could not read a response from the OpenAI API. Check your connection.") from exc
-        if not isinstance(envelope, dict):
-            raise QQError("OpenAI returned an invalid response.")
-        self.calls.append({"id": envelope.get("id"), "model": envelope.get("model"),
-                           "status": envelope.get("status"), "usage": envelope.get("usage"),
-                           "elapsed_seconds": round(time.monotonic() - started, 2)})
+        envelope = self._request(model, body)
+        if envelope.get("status") == "incomplete" and self._incomplete_reason(envelope) == "max_output_tokens":
+            body["max_output_tokens"] = 16384
+            body["instructions"] += (
+                "\nKeep the JSON concise. Finish as soon as the required fields are filled. "
+                "Use short, exact source quotes and omit repetition."
+            )
+            envelope = self._request(model, body)
         if envelope.get("status") != "completed":
-            details = envelope.get("incomplete_details")
-            reason = details.get("reason", "unknown") if isinstance(details, dict) else "unknown"
+            reason = self._incomplete_reason(envelope) or "unknown"
             raise QQError(f"OpenAI did not complete the response: {reason}.")
         text = []
         output = envelope.get("output", [])
@@ -84,3 +65,40 @@ class OpenAIClient:
         if not isinstance(result, dict):
             raise QQError("OpenAI did not return a JSON object.")
         return result
+
+
+    @staticmethod
+    def _incomplete_reason(envelope):
+        details = envelope.get("incomplete_details")
+        return details.get("reason") if isinstance(details, dict) else None
+
+    def _request(self, model, body):
+        request = Request("https://api.openai.com/v1/responses", json.dumps(body).encode(),
+                          {"Authorization": "Bearer " + self.api_key,
+                           "Content-Type": "application/json"})
+        started = time.monotonic()
+        try:
+            with urlopen(request, timeout=300) as response:
+                envelope = json.load(response)
+        except HTTPError as exc:
+            self.calls.append({"model": model, "http_status": exc.code,
+                               "elapsed_seconds": round(time.monotonic() - started, 2)})
+            # Authentication errors can echo part of a key. Never print the body.
+            detail = {
+                401: "The API key was rejected. Check OPENAI_API_KEY.",
+                403: "The API key does not have permission to use this model.",
+                404: f"The model {model} is unavailable to this API key. Check --model.",
+                429: "The API rate limit or quota was reached. Check API billing and usage limits.",
+            }.get(exc.code, "Check API access and service availability.")
+            exc.close()
+            raise QQError(f"OpenAI returned HTTP {exc.code}. {detail}") from exc
+        except (URLError, OSError, ValueError) as exc:
+            raise QQError("Could not read a response from the OpenAI API. Check your connection.") from exc
+        if not isinstance(envelope, dict):
+            raise QQError("OpenAI returned an invalid response.")
+        self.calls.append({"id": envelope.get("id"), "model": envelope.get("model"),
+                           "status": envelope.get("status"), "usage": envelope.get("usage"),
+                           "incomplete_reason": self._incomplete_reason(envelope),
+                           "max_output_tokens": body["max_output_tokens"],
+                           "elapsed_seconds": round(time.monotonic() - started, 2)})
+        return envelope

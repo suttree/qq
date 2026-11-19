@@ -65,7 +65,7 @@ export OPENAI_API_KEY="your-api-key"
 qq https://github.com/suttree/commonground/pull/15 --repo ~/src/commonground
 ```
 
-Select another API model with `--model NAME` or `QQ_OPENAI_MODEL`. The Context view identifies the provider and model. Saved reviews and failure diagnostics include API call metadata and token usage. QQ reads the key from the environment and does not save it with the review. Missing credentials, API errors, and incomplete responses stop the analysis. QQ does not automatically switch providers.
+Select another API model with `--model NAME` or `QQ_OPENAI_MODEL`. The Context view identifies the provider and model. Saved reviews and failure diagnostics include API call metadata and token usage. QQ reads the key from the environment and does not save it with the review. QQ retries once with a larger output budget when a response hits the output token limit. The retry incurs another API call. Missing credentials, API errors, and other incomplete responses stop the analysis. QQ does not automatically switch providers.
 
 To run entirely local inference, select Ollama explicitly:
 
