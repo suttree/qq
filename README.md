@@ -95,8 +95,17 @@ The PR evidence and JSON output schema are supplied separately. The citation cor
 - `d` shows the collected diff.
 - `c` shows which files and excerpts the model received.
 - `n` and `p` move between points.
+- `o` opens the first citation on GitHub. `1`, `2` and `3` open individual citations.
+- The Evidence view shows PR line URLs and source URLs at the reviewed commit.
 - `j` and `k`, arrow keys, or Page Up and Page Down scroll.
 - `q` quits.
+
+PR links open the cited lines in the current PR diff. If the branch has changed since
+the assessment, use the source URL to see the reviewed version. Citations outside
+the collected diff open the source at the reviewed commit instead. Saved reviews
+also get these links when reopened. JSON output includes `evidence_links` in the
+same point and citation order as the report. QQ builds URLs from the evidence packet
+after validating citations. The model does not supply URLs.
 
 ## Evidence and limits
 

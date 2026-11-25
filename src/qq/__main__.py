@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .core import QQError, analyse, collect, save_json, validate
+from .links import evidence_links
 from .providers import OPENAI_MODEL, OLLAMA_MODEL, OpenAIClient
 
 
@@ -50,6 +51,7 @@ def main():
         if args.open:
             review = json.loads(args.open.read_text())
             validate(review["report"], review["packet"])
+            review["evidence_links"] = evidence_links(review["packet"], review["report"])
             return review
         client = None
         if not args.collect_only:
@@ -79,6 +81,7 @@ def main():
         review = {"packet": packet, "report": report, "model": args.model, "provider": args.provider, "assessment": audit,
                   "created_at": datetime.now(timezone.utc).isoformat(),
                   "elapsed_seconds": round(time.monotonic() - started, 1)}
+        review["evidence_links"] = evidence_links(packet, report)
         if client is not None:
             review["api_calls"] = client.calls
         review["id"] = hashlib.sha256(json.dumps([packet["id"], args.provider, args.model, report], sort_keys=True).encode()).hexdigest()[:16]

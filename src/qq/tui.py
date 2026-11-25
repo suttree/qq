@@ -6,6 +6,25 @@ import queue
 import textwrap
 import threading
 import time
+import webbrowser
+
+from .links import evidence_links
+
+
+def open_evidence(review: dict, selected: int, index: int = 0) -> str:
+    links = evidence_links(review["packet"], review["report"])
+    if not links or index >= len(links[selected]):
+        return "No cited line for this shortcut."
+    link = links[selected][index]
+    url = link.get("pr_url") or link.get("source_url")
+    if not url:
+        return "This saved review has no GitHub link for that citation."
+    try:
+        if webbrowser.open(url):
+            return "Opened cited code on GitHub."
+    except (OSError, webbrowser.Error):
+        pass
+    return "Could not open a browser. Use the URL in the Evidence view."
 
 
 def paragraphs(review: dict, selected: int, tab: int) -> list[str]:
@@ -27,10 +46,16 @@ def paragraphs(review: dict, selected: int, tab: int) -> list[str]:
         title = "No feedback worth raising" if report["status"] == "no_feedback" else "More context needed"
         return [title, "", report["summary"], "", "This assessment covers the supplied evidence. Press c to see its scope."]
     point = points[selected]
+    links = evidence_links(packet, report)[selected]
     if tab == 1:
         lines = []
-        for citation in point["evidence"]:
-            lines.extend([f"{citation['side']}: {citation['path']}:{citation['line']}", ""])
+        for index, (citation, link) in enumerate(zip(point["evidence"], links), 1):
+            lines.extend([f"[{index}] {citation['side']}: {citation['path']}:{citation['line']}"])
+            if link.get("pr_url"):
+                lines.extend(["PR line, current diff", link["pr_url"]])
+            if link.get("source_url"):
+                lines.extend(["Source at reviewed commit", link["source_url"]])
+            lines.append("")
             source = next(f for f in packet["files"] if f["path"] == citation["path"] and f["side"] == citation["side"])
             start = max(source["start_line"], citation["line"] - 5)
             end = citation["line"] + len(citation["quote"].splitlines()) + 5
@@ -45,7 +70,9 @@ def paragraphs(review: dict, selected: int, tab: int) -> list[str]:
              "Questions to ask", point["question"], "", "Explanation", point["principle"]]
     if point["assumptions"]:
         lines.extend(["", "Assumptions", *point["assumptions"]])
-    lines.extend(["", "Evidence", *[f"{e['side']}: {e['path']}:{e['line']}" for e in point["evidence"]]])
+    lines.extend(["", "Evidence", *[f"[{i}] {e['side']}: {e['path']}:{e['line']}"
+                                     for i, e in enumerate(point["evidence"], 1)],
+                  "o opens the first citation. 1/2/3 open a citation. e shows URLs."])
     return lines
 
 
@@ -184,7 +211,7 @@ def show(loader):
                 put(5 + index, 3, line, line_style(line, colors, tab, titles))
             put(height - 4, 2, "─" * max(0, width - 5), colors["muted"])
             put(height - 3, 2, status, colors["muted"])
-            put(height - 2, 2, "j/k scroll  n/p points  Tab/f/e/d/c views  q quit", colors["orange"])
+            put(height - 2, 2, "j/k scroll  n/p points  Tab views  o/1/2/3 open  q quit", colors["orange"])
             stdscr.refresh()
             key = stdscr.getch()
             if key in (ord("q"), 27):
@@ -197,6 +224,8 @@ def show(loader):
                 scroll += visible
             elif key == curses.KEY_PPAGE:
                 scroll -= visible
+            elif review and key in map(ord, "o123"):
+                status = open_evidence(review, selected, 0 if key == ord("o") else key - ord("1"))
             elif review and key in (ord("n"), ord("p")):
                 count = len(review["report"]["points"])
                 selected = (selected + (1 if key == ord("n") else -1)) % max(1, count)
