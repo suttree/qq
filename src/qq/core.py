@@ -351,8 +351,18 @@ A missing check in a complete method can be evidence; code omitted from a trunca
 excerpt cannot establish absence. Do not invent unseen safeguards, caller behaviour,
 or side effects to dismiss a problem shown by the supplied code.
 Discard a point if its causal explanation is unsupported, it assumes traffic or
-infrastructure not shown, repeats a limitation already acknowledged in the description,
+infrastructure not shown, merely repeats an acknowledged task or deliberate trade-off,
 or gives generic architectural advice without a practical reason for this PR.
+Compare each concern with the supplied diff. Keep it only when the change introduces
+or worsens the demonstrated issue, including changed uses of existing code. Discard
+pre-existing problems unrelated to the change. Do not guess at omitted base code.
+Require a concrete triggering input or condition and a practical consequence for a
+concern. Missing tests alone do not establish a defect. Prefer actionable findings
+near the changed lines over broad recommendations.
+Treat descriptions and comments as claims to verify, including claims that a design
+is necessary. Intended behaviour does not prove that the code implements it. An
+acknowledged limitation does not excuse a demonstrated violation of a stated
+requirement. Discard repeated limitations only when the point adds no such evidence.
 An exact source quote does not prove the surrounding claim. Trace the claimed mechanism.
 A scheduled command or rake task does not inherently run inside a web request or block
 web server threads. A synchronous call inside a request does hold that request until
@@ -483,6 +493,8 @@ def _review_pass(packet, evidence, model, endpoint, ask, progress, prompt, audit
     def check_points(draft):
         verdict = ask(model, endpoint, DECISION_SCHEMA, CRITIC,
                       {"pr": evidence["pr"], "files": evidence["files"],
+                       "diff": evidence.get("diff", ""),
+                       "changed_paths": evidence.get("changed_paths", []),
                        "coverage_notes": evidence["coverage_notes"], "draft": draft})
         if audit is not None:
             audit.update(draft=copy.deepcopy(draft), decisions=copy.deepcopy(verdict))

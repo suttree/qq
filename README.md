@@ -117,6 +117,14 @@ Context selection is deliberately small. It prioritises changed source and selec
 
 Every accepted finding quotes an exact supplied file excerpt at its actual line. QQ validates the draft's structure and status, then checks its claims against the supplied source and PR description. Unsupported points can be discarded before quote repair. The raw draft and rejection reasons remain in the assessment.
 
+The review prompt asks for a concrete trigger and consequence for each concern. Both
+the draft and the relevance check receive the diff so they can distinguish a new
+regression from an unrelated pre-existing issue. They also check claims in comments
+and the PR description against the implementation. A stated requirement is not proof
+that the code meets it. Missing tests alone do not warrant a point. These instructions
+adapt parts of the supplied `code-review` skill while keeping the two-point coaching
+format. QQ still assesses the full collected PR evidence on each run.
+
 Retained points must pass exact citation validation. If the model gets indentation or a line number wrong, QQ resolves the quote only when it has one unique match in the supplied file. If a retained citation still fails, QQ asks once for source line ranges and copies the exact text itself. It then checks the claims again against those selected lines before accepting any feedback. The model cannot add new points during these checks.
 
 Unresolved citations in retained points, malformed output, and model failures are errors. They are never silently converted into "no feedback". Failed analyses save a `.failure.json` diagnostic beside the evidence packet, including drafts and any corrections received. The Context view shows the final relevance decisions. The selected model performs these checks and can still make mistakes.

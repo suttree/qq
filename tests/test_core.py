@@ -89,12 +89,16 @@ class ValidationTests(unittest.TestCase):
             filter_points(self.report, {"decisions": []})
 
     def test_analysis_runs_final_check_before_accepting_points(self):
-        self.packet.update(pr={"title": "Example"}, coverage_notes=[])
+        self.packet.update(pr={"title": "Example"}, coverage_notes=[],
+                           diff="@@ -1 +1 @@\n-old\n+new", changed_paths=["app/a.rb"])
         verdict = {"decisions": [{"index": 0, "keep": False, "kind": "discussion", "reason": "Unsupported impact."}]}
         audit = {}
         with patch("qq.core.model_json", side_effect=[self.empty, self.report, verdict]) as model:
             result = analyse(self.packet, "local-model", "http://127.0.0.1:11434", audit=audit)
         self.assertEqual(model.call_count, 3)
+        checked_evidence = model.call_args.args[4]
+        self.assertEqual(checked_evidence["diff"], self.packet["diff"])
+        self.assertEqual(checked_evidence["changed_paths"], ["app/a.rb"])
         self.assertEqual(result["status"], "no_feedback")
         self.assertEqual(len(audit["draft"]["points"]), 1)
 
