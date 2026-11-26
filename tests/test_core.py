@@ -377,6 +377,12 @@ class HistoricalContextTests(unittest.TestCase):
             git("remote", "add", "origin", "https://github.com/example/project.git")
             padding = "# Earlier code in this historical file.\n" * 150
             (repo / "model.rb").write_text(padding + "class Model\nend\n")
+            view = repo / "report.html.haml"
+            view.write_text("# Earlier view code.\n" * 200 + "= report.historical\n")
+            (repo / "caller.rb").write_text("report.historical\n")
+            (repo / "model_test.rb").write_text("assert report.historical\n")
+            for index in range(800):
+                (repo / f"a{index:03}.rb").touch()
             git("add", ".")
             git("commit", "-qm", "base")
             base = git("rev-parse", "HEAD")
@@ -397,6 +403,8 @@ class HistoricalContextTests(unittest.TestCase):
             excerpts = {file["path"]: file for file in packet["files"]}
             self.assertIn("def historical", excerpts["model.rb"]["text"])
             self.assertGreater(excerpts["model.rb"]["start_line"], 1)
+            self.assertIn("= report.historical", excerpts["report.html.haml"]["text"])
+            self.assertGreater(excerpts["report.html.haml"]["start_line"], 1)
             self.assertEqual(excerpts["expected.xml"]["text"], "<Feed><Job /></Feed>")
             self.assertNotIn("UNCOMMITTED", json.dumps(packet))
             self.assertNotIn("DO_NOT_INCLUDE", json.dumps(packet))

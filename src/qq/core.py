@@ -54,7 +54,7 @@ def safe_path(path: str) -> bool:
 def source_path(path: str) -> bool:
     return safe_path(path) and (Path(path).suffix in {
         ".rb", ".py", ".js", ".ts", ".tsx", ".jsx", ".lua", ".go", ".rs", ".swift",
-        ".erb", ".html", ".css", ".scss", ".yml", ".yaml", ".sql", ".md", ".toml",
+        ".erb", ".haml", ".slim", ".html", ".css", ".scss", ".yml", ".yaml", ".sql", ".md", ".toml",
         ".json", ".rake", ".sh", ".conf", ".xml"
     } or Path(path).name in {"Gemfile", "Dockerfile", "Rakefile", "Procfile"})
 
@@ -110,7 +110,7 @@ def collect(url: str, repo: Path, extra_files: list[str] | None = None,
 
     progress("Reading changed files and related code at the PR commit")
     files = []
-    budget = 30000
+    budget = 45000
 
     def add(path, side="head", limit=6000, focus=1):
         nonlocal budget
@@ -146,15 +146,49 @@ def collect(url: str, repo: Path, extra_files: list[str] | None = None,
     # Production code first; tests follow. Lockfiles stay in the diff.
     eligible = [p for p in changed if source_path(p)]
     eligible.sort(key=lambda p: (p.startswith(("test/", "spec/")), p))
+    changed_limit = min(2500, max(500, (budget - 14000) // max(1, len(eligible))))
     for path in eligible:
-        if budget < 10000:
+        if budget < 14000:
             notes.append("Changed-file budget reached; some changed files appear only in the diff.")
             break
         hunks = git("diff", "--no-ext-diff", "--no-textconv", "--unified=0", ancestor, head, "--", path)
         side = "head" if path in candidates else "base"
         match = re.search(r"^@@ -(\d+)(?:,\d+)? \+(\d+)", hunks, re.M)
         focus = int(match.group(2 if side == "head" else 1)) if match else 1
-        add(path, side, limit=2500, focus=focus)
+        add(path, side, limit=changed_limit, focus=focus)
+
+    # Search the whole commit for callers of methods defined on changed lines.
+    methods = list(dict.fromkeys(re.findall(
+        r"^\+[ \t]*def[ \t]+(?:self\.)?([A-Za-z_][A-Za-z_0-9]{3,})\b", diff, re.M
+    )))[:16]
+    references = {}
+    if methods:
+        try:
+            matches = git("grep", "-I", "-n", "-w", "-E", "-e", "|".join(methods), head, "--")
+        except QQError as exc:
+            if str(exc) != "git failed":  # git grep exits 1 without output when nothing matches.
+                raise
+            matches = ""
+        for match in matches.splitlines():
+            fields = match.split(":", 3)
+            if len(fields) != 4:
+                continue
+            _, path, line, source = fields
+            if not line.isdecimal() or source.lstrip().startswith("def "):
+                continue
+            references.setdefault(path, int(line))
+
+    mentioned = set(re.findall(r"[\w.-]+\.(?:rb|py|js|ts|tsx|jsx|erb|haml|slim)", meta["body"]))
+    candidate_set = set(candidates)
+    remaining = candidate_set - set(eligible) - set(extras)
+    related_paths = sorted(
+        (path for path in remaining if path in references or Path(path).name in mentioned),
+        key=lambda path: (Path(path).name not in mentioned, path.startswith("test/"), path),
+    )
+    for path in related_paths[:5]:
+        if budget < 500:
+            break
+        add(path, limit=3500, focus=references.get(path, 1))
 
     symbol_source = diff + "\n" + "\n".join(f["text"] for f in files)
     symbols = (set(re.findall(r"\b([A-Z][A-Za-z0-9]+)(?=\.|::|\s*<)", symbol_source))
@@ -163,8 +197,9 @@ def collect(url: str, repo: Path, extra_files: list[str] | None = None,
     stems = {Path(p).stem.removesuffix("_test").removesuffix("_spec") for p in eligible}
     ranked = []
     # Read only tracked source at the historic head, never the worktree or ignored files.
-    for path in candidates[:800]:
-        if path in eligible or path in extras:
+    fallback_paths = candidates[:800] if len(related_paths) < 3 and budget >= 500 else []
+    for path in fallback_paths:
+        if path not in remaining or path in related_paths:
             continue
         content = read(head, path)
         if content is None:
@@ -180,9 +215,9 @@ def collect(url: str, repo: Path, extra_files: list[str] | None = None,
         if budget < 500:
             break
         add(path, limit=3500)
-    notes.append("Related files were selected by names and symbols, not a complete call graph.")
-    if len(candidates) > 800:
-        notes.append("Related-file search limited to the first 800 source paths.")
+    notes.append("Related excerpts use changed method references, filenames in the PR description, and symbol matches.")
+    if len(candidates) > len(fallback_paths) and fallback_paths:
+        notes.append("Fallback symbol search limited to the first 800 source paths.")
     packet = {"version": 1, "pr": meta, "merge_base": ancestor,
               "diff": diff, "changed_paths": changed, "files": files,
               "coverage_notes": notes}

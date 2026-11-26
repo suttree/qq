@@ -113,7 +113,7 @@ QQ reads GitHub's PR title, description and commit IDs. It compares the head wit
 
 The local repository's origin must match the PR. Both commits must exist locally. If a commit is missing, fetch it into your checkout before retrying. Automatic fetching and cloning are not implemented yet.
 
-Context selection is deliberately small. It prioritises changed source and selects related files by names and symbols. It reserves space for related code, but does not trace every caller. The Context view discloses truncation and file coverage. Use repeated `--context-file path/to/file` arguments to include a caller, shared component or test you know matters.
+QQ reserves space for related code alongside changed files. It searches the reviewed commit for references to Ruby methods defined on changed lines and for source or test filenames mentioned in the PR description. It centres excerpts on matching references and uses a bounded symbol search when few files match. The Context view shows truncation and file coverage. Use repeated `--context-file path/to/file` arguments to include a caller, shared component or test you know matters.
 
 Every accepted finding quotes an exact supplied file excerpt at its actual line. QQ validates the draft's structure and status, then checks its claims against the supplied source and PR description. Unsupported points can be discarded before quote repair. The raw draft and rejection reasons remain in the assessment.
 
